@@ -31,6 +31,13 @@ class BasicBlockERes2Net(nn.Module):
     expansion = 2
 
     def __init__(self, in_planes, planes, stride=1, baseWidth=32, scale=2):
+        """
+        in_planes:输入通道维度
+        planes:输出通道维度
+        stride:
+        baseWidth:
+        scale:res2net中的3x3卷积分组数
+        """
         super(BasicBlockERes2Net, self).__init__()
         width = int(math.floor(planes*(baseWidth/64.0)))
         self.conv1 = nn.Conv2d(in_planes, width*scale, kernel_size=1, stride=stride, bias=False)
