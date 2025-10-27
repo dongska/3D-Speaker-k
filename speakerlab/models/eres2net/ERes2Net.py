@@ -31,51 +31,65 @@ class BasicBlockERes2Net(nn.Module):
     expansion = 2
 
     def __init__(self, in_planes, planes, stride=1, baseWidth=32, scale=2):
+        """
+        in_planes:输入通道数
+        planes:输出通道数
+        stride:第一个1x1卷积的步长
+        baseWidth:用于计算3x3卷积中每个分组输入（=输出）的通道数的比率
+        scale:res2netBlock中3x3卷积分组数
+        """
         super(BasicBlockERes2Net, self).__init__()
-        width = int(math.floor(planes*(baseWidth/64.0)))
-        self.conv1 = nn.Conv2d(in_planes, width*scale, kernel_size=1, stride=stride, bias=False)
+        width = int(math.floor(planes*(baseWidth/64.0))) # width计算3x3卷积中每个分组输入（=输出）的通道数
+        self.conv1 = nn.Conv2d(in_planes, width*scale, kernel_size=1, stride=stride, bias=False) # 第一个1x1卷积 
         self.bn1 = nn.BatchNorm2d(width*scale)
-        self.nums = scale
+        self.nums = scale # 分组数量
 
         convs=[]
         bns=[]
-        for i in range(self.nums):
-        	convs.append(nn.Conv2d(width, width, kernel_size=3, padding=1, bias=False))
-        	bns.append(nn.BatchNorm2d(width))
+        for i in range(self.nums): # 每个分组使用一个3x3卷积
+            convs.append(nn.Conv2d(width, width, kernel_size=3, padding=1, bias=False))
+            bns.append(nn.BatchNorm2d(width))
         self.convs = nn.ModuleList(convs)
         self.bns = nn.ModuleList(bns)
         self.relu = ReLU(inplace=True)
         
+        # 第二个1x1卷积
         self.conv3 = nn.Conv2d(width*scale, planes*self.expansion, kernel_size=1, bias=False)
         self.bn3 = nn.BatchNorm2d(planes*self.expansion)
+
+        # 捷径
         self.shortcut = nn.Sequential()
-        if stride != 1 or in_planes != self.expansion * planes:
+        if stride != 1 or in_planes != self.expansion * planes: # 如果第一个1x1卷积做了下采用/第二个1x1卷积做了通道维度扩张，对x做相应操作
             self.shortcut = nn.Sequential(
                 nn.Conv2d(in_planes, self.expansion * planes, kernel_size=1,
                           stride=stride, bias=False),
                 nn.BatchNorm2d(self.expansion * planes))
+            
         self.stride = stride
         self.width = width
         self.scale = scale
 
     def forward(self, x):
-        residual = x
+        residual = x # 残差
 
+        # 1x1
         out = self.conv1(x)
         out = self.bn1(out)
         out = self.relu(out)
+
+        # 3x3分组
         spx = torch.split(out,self.width,1)
         for i in range(self.nums):
-        	if i==0:
-        		sp = spx[i]
+        	if i==0: 
+        		sp = spx[i] # 第一组的输入是spx[0]
+            else:
+        		sp = sp + spx[i] # 后面组的输入是 spx[i] + sp(上一组的卷积结果)
+            sp = self.convs[i](sp)
+            sp = self.relu(self.bns[i](sp))
+            if i==0:
+        		out = sp # 第一组的输出是自己
         	else:
-        		sp = sp + spx[i]
-        	sp = self.convs[i](sp)
-        	sp = self.relu(self.bns[i](sp))
-        	if i==0:
-        		out = sp
-        	else:
-        		out = torch.cat((out,sp),1)
+        		out = torch.cat((out,sp),1) # 后面组的输出是拼接后的结果
 
         out = self.conv3(out)
         out = self.bn3(out)
