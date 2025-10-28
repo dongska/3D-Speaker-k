@@ -67,7 +67,7 @@ class ASTP(nn.Module):
         # need to transpose inputs.
         if global_context_att:
             self.linear1 = nn.Conv1d(
-                in_dim * 3, bottleneck_dim,
+                in_dim * 3, bottleneck_dim, # 拼接了全局的 mean 和 std
                 kernel_size=1)  # equals W and b in the paper
         else:
             self.linear1 = nn.Conv1d(
@@ -96,8 +96,8 @@ class ASTP(nn.Module):
 
         # DON'T use ReLU here! ReLU may be hard to converge.
         alpha = torch.tanh(
-            self.linear1(x_in))  # alpha = F.relu(self.linear1(x_in))
-        alpha = torch.softmax(self.linear2(alpha), dim=2)
+            self.linear1(x_in))  # alpha = F.relu(self.linear1(x_in)) (B, 128, T)
+        alpha = torch.softmax(self.linear2(alpha), dim=2) # (B, in_dim, T)
         mean = torch.sum(alpha * x, dim=2)
         var = torch.sum(alpha * (x**2), dim=2) - mean**2
         std = torch.sqrt(var.clamp(min=1e-10))

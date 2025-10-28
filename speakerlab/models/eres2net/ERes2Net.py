@@ -37,6 +37,8 @@ class BasicBlockERes2Net(nn.Module):
         stride:第一个1x1卷积的步长
         baseWidth:用于计算3x3卷积中每个分组输入（=输出）的通道数的比率
         scale:res2netBlock中3x3卷积分组数
+
+        return:[B,self.expansion*planes,F/stride,T/stride]
         """
         super(BasicBlockERes2Net, self).__init__()
         width = int(math.floor(planes*(baseWidth/64.0))) # width计算3x3卷积中每个分组输入（=输出）的通道数
@@ -116,6 +118,8 @@ class BasicBlockERes2Net_diff_AFF(nn.Module):
         for i in range(self.nums):
         	convs.append(nn.Conv2d(width, width, kernel_size=3, padding=1, bias=False))
         	bns.append(nn.BatchNorm2d(width))
+             
+        # 分组数-1个AFF
         for j in range(self.nums - 1):
             fuse_models.append(AFF(channels=width))
 
@@ -126,12 +130,14 @@ class BasicBlockERes2Net_diff_AFF(nn.Module):
         
         self.conv3 = nn.Conv2d(width*scale, planes*self.expansion, kernel_size=1, bias=False)
         self.bn3 = nn.BatchNorm2d(planes*self.expansion)
+
         self.shortcut = nn.Sequential()
         if stride != 1 or in_planes != self.expansion * planes:
             self.shortcut = nn.Sequential(
                 nn.Conv2d(in_planes, self.expansion * planes, kernel_size=1,
                           stride=stride, bias=False),
                 nn.BatchNorm2d(self.expansion * planes))
+
         self.stride = stride
         self.width = width
         self.scale = scale
@@ -142,12 +148,13 @@ class BasicBlockERes2Net_diff_AFF(nn.Module):
         out = self.conv1(x)
         out = self.bn1(out)
         out = self.relu(out)
+
         spx = torch.split(out,self.width,1)     
         for i in range(self.nums):
             if i==0:
-                sp = spx[i]
+                sp = spx[i] # 第一组的输入是spx[0]
             else:
-                sp = self.fuse_models[i-1](sp, spx[i])
+                sp = self.fuse_models[i-1](sp, spx[i]) # 后面组的输入使用AFF融合spx[i] 和 sp 来作为输入
                 
             sp = self.convs[i](sp)
             sp = self.relu(self.bns[i](sp))
@@ -170,40 +177,61 @@ class ERes2Net(nn.Module):
                  block=BasicBlockERes2Net,
                  block_fuse=BasicBlockERes2Net_diff_AFF,
                  num_blocks=[3, 4, 6, 3],
-                 m_channels=32,
+                 m_channels=32, # 每个 stage 的初始通道数
                  feat_dim=80,
                  embedding_size=192,
-                 pooling_func='TSTP',
+                 pooling_func='TSTP', # Temporal Self-attentive Two-level Pooling
                  two_emb_layer=False):
         super(ERes2Net, self).__init__()
-        self.in_planes = m_channels
+        self.in_planes = m_channels # 更新当前block的输入通道数
         self.feat_dim = feat_dim
         self.embedding_size = embedding_size
-        self.stats_dim = int(feat_dim / 8) * m_channels * 8
+        self.stats_dim = int(feat_dim / 8) * m_channels * 8 # 每帧的特征维度，feat_dim有8倍下采样，m_channels加大8倍
         self.two_emb_layer = two_emb_layer
 
+        # [B,1,F,T] -> [B,32,F,T]
         self.conv1 = nn.Conv2d(1, m_channels, kernel_size=3, stride=1, padding=1, bias=False)
         self.bn1 = nn.BatchNorm2d(m_channels)
+
+        # stage 1: [B,32,F,T] -> [B,64,F,T] m_channels=32是目标通道数，但block内做了expand
         self.layer1 = self._make_layer(block, m_channels, num_blocks[0], stride=1)
+
+        # stage 2: [B,64,F,T] -> [B,128,F/2,T/2]
         self.layer2 = self._make_layer(block, m_channels * 2, num_blocks[1], stride=2)
+
+        # stage 3: [B,128,F/2,T/2] -> [B,256,F/4,T/4]
         self.layer3 = self._make_layer(block_fuse, m_channels * 4, num_blocks[2], stride=2)
+
+        # stage 4:[B,256,F/4,T/4] -> [B,512,F/8,T/8]
         self.layer4 = self._make_layer(block_fuse, m_channels * 8, num_blocks[3], stride=2)
 
-        # Downsampling module for each layer
+        # 用于全局连接（各stage之间fusion)的下采样层
+        # [B,64,F,T] -> [B,128,F/2,T/2]
         self.layer1_downsample = nn.Conv2d(m_channels * 2, m_channels * 4, kernel_size=3, stride=2, padding=1, bias=False)
+        # [B,128,F/2,T/2] -> [B,256,F/4,T/4]
         self.layer2_downsample = nn.Conv2d(m_channels * 4, m_channels * 8, kernel_size=3, padding=1, stride=2, bias=False)
+        # [B,256,F/4,T/4] -> [B,512,F/8,T/8]
         self.layer3_downsample = nn.Conv2d(m_channels * 8, m_channels * 16, kernel_size=3, padding=1, stride=2, bias=False)
 
-        # Bottom-up fusion module
+        # Bottom-up fusion module  用于全局连接（各stage之间fusion)的AFF
+        # stage 1 and stage 2
         self.fuse_mode12 = AFF(channels=m_channels * 4)
+        # stage 12 and stage 3
         self.fuse_mode123 = AFF(channels=m_channels * 8)
+        # stage 123 and stage 4
         self.fuse_mode1234 = AFF(channels=m_channels * 16)
 
+        # n_stats 表示是否拼接了均值与标准差
         self.n_stats = 1 if pooling_func == 'TAP' or pooling_func == "TSDP" else 2
+
+        # 池化层定义：self.stats_dim表示最后一个block后每帧的特征维度（频率*通道）*expansion
         self.pool = getattr(pooling_layers, pooling_func)(
             in_dim=self.stats_dim * block.expansion)
+        
+        # 池化后的全连接，输入维度：为最后一个block后每帧的特征维度（频率*通道）*expansion*self.n_stats
         self.seg_1 = nn.Linear(self.stats_dim * block.expansion * self.n_stats,
                                embedding_size)
+        
         if self.two_emb_layer:
             self.seg_bn_1 = nn.BatchNorm1d(embedding_size, affine=False)
             self.seg_2 = nn.Linear(embedding_size, embedding_size)
@@ -212,11 +240,21 @@ class ERes2Net(nn.Module):
             self.seg_2 = nn.Identity()
 
     def _make_layer(self, block, planes, num_blocks, stride):
+        """
+        构建stage，包含多个block
+        planes：每个 block 的目标通道
+        num_blocks：block 数量
+        stride：该stage中第一层的步幅，用于下采样
+
+        return:该stage的各blockSequential
+        """
+        # 生成 strides 列表，第一个 block 可能执行下采样（stride=2），之后的 block 都 stride=1
         strides = [stride] + [1] * (num_blocks - 1)
+        
         layers = []
         for stride in strides:
-            layers.append(block(self.in_planes, planes, stride))
-            self.in_planes = planes * block.expansion
+            layers.append(block(self.in_planes, planes, stride)) # 每个block在最后的1x1卷积中返回的通道数是self.expansion*planes
+            self.in_planes = planes * block.expansion # 更新下一个block的输入通道数
         return nn.Sequential(*layers)
 
     def forward(self, x):
