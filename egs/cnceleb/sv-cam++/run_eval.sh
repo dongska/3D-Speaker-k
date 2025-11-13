@@ -5,13 +5,13 @@
 set -e
 . ./path.sh || exit 1
 
-stage=3
+stage=1
 stop_stage=5
 
 data=data
-exp=exp
-exp_name=cam++_0
-gpus="0" ######
+exp=exp_eval
+exp_name=cam++
+gpus="0"
 
 . utils/parse_options.sh || exit 1
 
@@ -33,7 +33,7 @@ if [ ${stage} -le 3 ] && [ ${stop_stage} -ge 3 ]; then
   # Train the speaker embedding model.
   echo "Stage3: Training the speaker model..."
   num_gpu=$(echo $gpus | awk -F ' ' '{print NF}')
-  torchrun --nproc_per_node=$num_gpu --master_port=29501 speakerlab/bin/train.py --config conf/cam++_0.yaml --gpu $gpus \
+  torchrun --nproc_per_node=$num_gpu --master_port=29501 speakerlab/bin/train.py --config conf/cam++.yaml --gpu $gpus \
            --data $data/cnceleb_train/train.csv --noise $data/musan/wav.scp --reverb $data/rirs/wav.scp --exp_dir $exp_dir
 fi
 
