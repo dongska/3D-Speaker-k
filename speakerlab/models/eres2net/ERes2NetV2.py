@@ -49,6 +49,7 @@ class BasicBlockERes2NetV2(nn.Module):
         
         self.conv3 = nn.Conv2d(width*scale, planes*self.expansion, kernel_size=1, bias=False)
         self.bn3 = nn.BatchNorm2d(planes*self.expansion)
+
         self.shortcut = nn.Sequential()
         if stride != 1 or in_planes != self.expansion * planes:
             self.shortcut = nn.Sequential(
@@ -68,6 +69,7 @@ class BasicBlockERes2NetV2(nn.Module):
         out = self.conv1(x)
         out = self.bn1(out)
         out = self.relu(out)
+
         spx = torch.split(out,self.width,1)
         for i in range(self.nums):
         	if i==0:
@@ -163,7 +165,7 @@ class ERes2NetV2(nn.Module):
                  block=BasicBlockERes2NetV2,
                  block_fuse=BasicBlockERes2NetV2AFF,
                  num_blocks=[3, 4, 6, 3],
-                 m_channels=64,
+                 m_channels=64, # 基本通道数加倍
                  feat_dim=80,
                  embedding_size=192,
                  baseWidth=26,
@@ -188,6 +190,7 @@ class ERes2NetV2(nn.Module):
                                padding=1,
                                bias=False)
         self.bn1 = nn.BatchNorm2d(m_channels)
+
         self.layer1 = self._make_layer(block,
                                        m_channels,
                                        num_blocks[0],
