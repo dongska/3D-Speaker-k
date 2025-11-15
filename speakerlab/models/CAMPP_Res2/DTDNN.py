@@ -7,7 +7,7 @@ import torch
 from torch import nn
 import torch.nn.functional as F
 
-from speakerlab.models.campplus.layers import DenseLayer, StatsPool, TDNNLayer, CAMDenseTDNNBlock, TransitLayer, BasicResBlock, get_nonlinear, BasicBlockERes2Net_diff_AFF
+from speakerlab.models.CAMPP_Res2.layers import DenseLayer, StatsPool, TDNNLayer, CAMDenseTDNNBlock, TransitLayer, BasicResBlock, get_nonlinear, BasicBlockERes2Net_diff_AFF
 
 
 class FCM(nn.Module):
@@ -35,7 +35,7 @@ class FCM(nn.Module):
         self.bn2 = nn.BatchNorm2d(m_channels)
         self.out_channels =  m_channels * (feat_dim // 8)
 
-        def _make_layer_ERes2Block(self, block, planes, num_blocks, stride):
+    def _make_layer_ERes2Block(self, block, planes, num_blocks, stride):
         """
         构建stage，包含多个block
         planes：每个 block 的目标通道

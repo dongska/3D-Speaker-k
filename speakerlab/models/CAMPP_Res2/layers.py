@@ -5,6 +5,8 @@ import torch
 import torch.nn.functional as F
 import torch.utils.checkpoint as cp
 from torch import nn
+import math
+from speakerlab.models.CAMPP_Res2.fusion import AFF
 
 
 def get_nonlinear(config_str, channels):
@@ -252,3 +254,84 @@ class BasicResBlock(nn.Module):
         out += self.shortcut(x)
         out = F.relu(out)
         return out
+
+class ReLU(nn.Hardtanh):
+
+    def __init__(self, inplace=False):
+        super(ReLU, self).__init__(0, 20, inplace)
+
+    def __repr__(self):
+        inplace_str = 'inplace' if self.inplace else ''
+        return self.__class__.__name__ + ' (' \
+            + inplace_str + ')'
+
+class BasicBlockERes2Net_diff_AFF(nn.Module):
+    expansion = 2
+
+    def __init__(self, in_planes, planes, stride=1, baseWidth=32, scale=2):
+        super(BasicBlockERes2Net_diff_AFF, self).__init__()
+        width = int(math.floor(planes*(baseWidth/64.0)))
+        self.conv1 = nn.Conv2d(in_planes, width*scale, kernel_size=1, stride=(stride,1), bias=False) # 与原来不同，stride只在Height维度上变化
+        self.bn1 = nn.BatchNorm2d(width*scale)
+        self.nums = scale
+
+        convs=[]
+        fuse_models=[]
+        bns=[]
+        for i in range(self.nums):
+        	convs.append(nn.Conv2d(width, width, kernel_size=3, padding=1, bias=False))
+        	bns.append(nn.BatchNorm2d(width))
+             
+        # 分组数-1个AFF
+        for j in range(self.nums - 1):
+            fuse_models.append(AFF(channels=width))
+
+        self.convs = nn.ModuleList(convs)
+        self.bns = nn.ModuleList(bns)
+        self.fuse_models = nn.ModuleList(fuse_models)
+        self.relu = ReLU(inplace=True)
+        
+        self.conv3 = nn.Conv2d(width*scale, planes*self.expansion, kernel_size=1, bias=False)
+        self.bn3 = nn.BatchNorm2d(planes*self.expansion)
+
+        self.shortcut = nn.Sequential()
+        if stride != 1 or in_planes != self.expansion * planes:
+            self.shortcut = nn.Sequential(
+                nn.Conv2d(in_planes, self.expansion * planes, kernel_size=1,
+                          stride=(stride,1), bias=False), ### 与原来不同，stride只在Height维度上变化
+                nn.BatchNorm2d(self.expansion * planes))
+
+        self.stride = stride
+        self.width = width
+        self.scale = scale
+
+    def forward(self, x):
+        residual = x
+
+        out = self.conv1(x)
+        out = self.bn1(out)
+        out = self.relu(out)
+
+        spx = torch.split(out,self.width,1)     
+        for i in range(self.nums):
+            if i==0:
+                sp = spx[i] # 第一组的输入是spx[0]
+            else:
+                sp = self.fuse_models[i-1](sp, spx[i]) # 后面组的输入使用AFF融合spx[i] 和 sp 来作为输入
+                
+            sp = self.convs[i](sp)
+            sp = self.relu(self.bns[i](sp))
+            if i==0:
+                out = sp
+            else:
+                out = torch.cat((out,sp),1)
+
+        out = self.conv3(out)
+        out = self.bn3(out)
+
+        residual = self.shortcut(x)
+        out += residual
+        out = self.relu(out)
+
+        return out
+
