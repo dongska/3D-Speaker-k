@@ -25,10 +25,10 @@ class FCM(nn.Module):
 
         # m_channels:输出通道数
         # [B,m_channels,F,T] -> [B,m_channels*expansion,F/2,T]
-        self.layer1 = self._make_layer(block, m_channels, num_blocks[0], stride=2) 
+        self.layer1 = self._make_layer_ERes2Block(block, m_channels, num_blocks[0], stride=2) 
 
         # [B,m_channels*expansion,F/2,T] -> [B,m_channels*2*expansion,F/4,T]
-        self.layer2 = self._make_layer(block, m_channels * 2, num_blocks[1], stride=2)
+        self.layer2 = self._make_layer_ERes2Block(block, m_channels * 2, num_blocks[1], stride=2)
 
         # [B,m_channels*2*expansion,F/4,T] -> [B,m_channels,F/8,T]
         self.conv2 = nn.Conv2d(self.in_planes, m_channels, kernel_size=3, stride=(2, 1), padding=1, bias=False)
