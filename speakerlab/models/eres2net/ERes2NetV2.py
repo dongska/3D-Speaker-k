@@ -32,7 +32,7 @@ class BasicBlockERes2NetV2(nn.Module):
 
     def __init__(self, in_planes, planes, stride=1, baseWidth=26, scale=2, expansion=2):
         super(BasicBlockERes2NetV2, self).__init__()
-        width = int(math.floor(planes*(baseWidth/64.0)))
+        width = int(math.floor(planes*(baseWidth/64.0))) # v2版本的压缩比例更大
         self.conv1 = nn.Conv2d(in_planes, width*scale, kernel_size=1, stride=stride, bias=False)
         self.bn1 = nn.BatchNorm2d(width*scale)
         self.nums = scale
