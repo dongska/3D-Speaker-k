@@ -271,6 +271,20 @@ class MultiBranchDenseTDNNBlock(DenseTDNNBlock):
                 memory_efficient=memory_efficient)
             self.add_module('tdnnd%d' % (i + 1), layer)
 
+class TransitLayer(nn.Module):
+    def __init__(self,
+                 in_channels,
+                 out_channels,
+                 bias=True,
+                 config_str='batchnorm-relu'):
+        super(TransitLayer, self).__init__()
+        self.nonlinear = get_nonlinear(config_str, in_channels)
+        self.linear = nn.Conv1d(in_channels, out_channels, 1, bias=bias)
+
+    def forward(self, x):
+        x = self.nonlinear(x)
+        x = self.linear(x)
+        return x
 
 class TransitLayer(nn.Module):
     def __init__(self,
@@ -287,34 +301,34 @@ class TransitLayer(nn.Module):
         self.linear = nn.Conv1d(in_channels, out_channels, 1, bias=bias)
         self.inst_norm = nn.BatchNorm1d(in_channels)
 
-        # 可选地使用 Mamba 作为时间域的混合模块（替代或补充线性层）。
-        # 如果 Mamba 未安装或 use_mamba=False，则保持原有行为。
-        self.use_mamba = bool(use_mamba) and (Mamba is not None)
-        self.mamba = None
-        if self.use_mamba:
-            mamba_cfg = {} if mamba_cfg is None else dict(mamba_cfg)
-            # factory kwargs 用于在创建参数时指定 device/dtype
-            #factory_kwargs = {"device": device, "dtype": dtype}
-            self.mamba = Mamba(in_channels)
+        # # 可选地使用 Mamba 作为时间域的混合模块（替代或补充线性层）。
+        # # 如果 Mamba 未安装或 use_mamba=False，则保持原有行为。
+        # self.use_mamba = bool(use_mamba) and (Mamba is not None)
+        # self.mamba = None
+        # if self.use_mamba:
+        #     mamba_cfg = {} if mamba_cfg is None else dict(mamba_cfg)
+        #     # factory kwargs 用于在创建参数时指定 device/dtype
+        #     #factory_kwargs = {"device": device, "dtype": dtype}
+        #     self.mamba = Mamba(in_channels)
             
 
     def forward(self, x):
         x = self.nonlinear(x)
-        # 如果启用了 Mamba，则先通过 Mamba 处理时间序列（注意 Mamba 接口期望 B x T x D），
-        # 但在这里我们使用 Conv1d 的输入格式 (B, C, L)，因此需要转置到 (B, L, C)
-        # print(f"Trans_layer.self.mamba:{self.mamba}")
+    #     # 如果启用了 Mamba，则先通过 Mamba 处理时间序列（注意 Mamba 接口期望 B x T x D），
+    #     # 但在这里我们使用 Conv1d 的输入格式 (B, C, L)，因此需要转置到 (B, L, C)
+    #     # print(f"Trans_layer.self.mamba:{self.mamba}")
     
-        # x: (B, C, L) -> (B, L, C)
-       # res = x
-        x_perm = x.permute(0, 2, 1)
-        x_perm = self.mamba(x_perm)
-        #print("mamba output grad_fn:", x_perm.grad_fn)
-        x = x_perm.permute(0, 2, 1)
-        print("mamba work!")
-        #x = x + res
-        x = F.relu(x)
-        x = self.inst_norm(x)
-        # 始终通过线性层投影到目标 out_channels，确保后续模块收到固定通道数
+    #     # x: (B, C, L) -> (B, L, C)
+    #    # res = x
+    #     x_perm = x.permute(0, 2, 1)
+    #     x_perm = self.mamba(x_perm)
+    #     #print("mamba output grad_fn:", x_perm.grad_fn)
+    #     x = x_perm.permute(0, 2, 1)
+    #     print("mamba work!")
+    #     #x = x + res
+    #     x = F.relu(x)
+    #     x = self.inst_norm(x)
+    #     # 始终通过线性层投影到目标 out_channels，确保后续模块收到固定通道数
         x = self.linear(x)    
         return x
 
