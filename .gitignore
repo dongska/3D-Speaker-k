@@ -44,3 +44,14 @@ Makefile
 **/onnx_runtime/
 **/exp/
 **/__pycache__/
+
+*.ckpt
+CKPT.yaml
+*.scp
+*.ark
+
+egs/cnceleb/sv-cam++/cn-celeb_v2.tar.gz
+egs/cnceleb/sv-cam++/cn-celeb2_v2.tar.gzab
+egs/cnceleb/sv-cam++/cn-celeb2_v2.tar.gzaa
+egs/cnceleb/sv-cam++/cn-celeb2_v2.tar.gzac
+egs/cnceleb/sv-cam++/wget-log.1

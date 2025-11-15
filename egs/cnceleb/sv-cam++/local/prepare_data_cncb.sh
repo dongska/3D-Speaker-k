@@ -61,9 +61,7 @@ fi
 
 if [ ${stage} -le 3 ] && [ ${stop_stage} -ge 3 ]; then
   echo "convert flac to wav ..."
-  python local/flac2wav.py \
-      --dataset_dir ${rawdata_dir}/CN-Celeb_flac \
-      --nj 16
+  
 
   python local/flac2wav.py \
       --dataset_dir ${rawdata_dir}/CN-Celeb2_flac \
