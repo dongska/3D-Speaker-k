@@ -12,8 +12,8 @@ from speakerlab.models.campplus.layers import DenseLayer, StatsPool, TDNNLayer, 
 
 class FCM(nn.Module):
     def __init__(self,
-                block=BasicResBlock,
-                num_blocks=[2, 2],
+                block=BasicResBlock, # 把一个残差块的类作为默认参数传进来
+                num_blocks=[2, 2], # 用于设置每个layer中使用几个
                 m_channels=32,
                 feat_dim=80):
         super(FCM, self).__init__()
@@ -21,7 +21,8 @@ class FCM(nn.Module):
         self.conv1 = nn.Conv2d(1, m_channels, kernel_size=3, stride=1, padding=1, bias=False)
         self.bn1 = nn.BatchNorm2d(m_channels)
 
-        self.layer1 = self._make_layer(block, m_channels, num_blocks[0], stride=2)
+        # block:参数（BasicResBlock），m_channels:输出通道数，
+        self.layer1 = self._make_layer(block, m_channels, num_blocks[0], stride=2) 
         self.layer2 = self._make_layer(block, m_channels, num_blocks[1], stride=2)
 
         self.conv2 = nn.Conv2d(m_channels, m_channels, kernel_size=3, stride=(2, 1), padding=1, bias=False)
@@ -29,9 +30,9 @@ class FCM(nn.Module):
         self.out_channels =  m_channels * (feat_dim // 8)
 
     def _make_layer(self, block, planes, num_blocks, stride):
-        strides = [stride] + [1] * (num_blocks - 1)
+        strides = [stride] + [1] * (num_blocks - 1) # num_blocks表示该layer中包含的block数量，其中第一个块的stride=参数stride，其余所有块的stride=1。[2,1]
         layers = []
-        for stride in strides:
+        for stride in strides: # strides列表中记录的是该layer中每个block的stride, 这里开始创建每个block
             layers.append(block(self.in_planes, planes, stride))
             self.in_planes = planes * block.expansion
         return nn.Sequential(*layers)
@@ -59,7 +60,7 @@ class CAMPPlus(nn.Module):
         super(CAMPPlus, self).__init__()
 
         self.head = FCM(feat_dim=feat_dim)
-        channels = self.head.out_channels
+        channels = self.head.out_channels # self.out_channels =  m_channels * (feat_dim // 8)
 
         self.xvector = nn.Sequential(
             OrderedDict([
@@ -68,7 +69,7 @@ class CAMPPlus(nn.Module):
                  TDNNLayer(channels,
                            init_channels,
                            5,
-                           stride=2,
+                           stride=2, # 2.2 Additionally, we adopted an input TDNN layer with 1/2 subsampling rate before the D-TDNN backbone to accelerate computation.”
                            dilation=1,
                            padding=-1,
                            config_str=config_str)),
@@ -85,8 +86,8 @@ class CAMPPlus(nn.Module):
                                    config_str=config_str,
                                    memory_efficient=memory_efficient)
             self.xvector.add_module('block%d' % (i + 1), block)
-            channels = channels + num_layers * growth_rate
-            self.xvector.add_module(
+            channels = channels + num_layers * growth_rate # 过完一个CAMDenseTDNNBlock后通道数
+            self.xvector.add_module( # 过渡层
                 'transit%d' % (i + 1),
                 TransitLayer(channels,
                              channels // 2,
@@ -102,7 +103,7 @@ class CAMPPlus(nn.Module):
             'dense',
             DenseLayer(channels * 2, embedding_size, config_str='batchnorm_'))
 
-        for m in self.modules():
+        for m in self.modules(): # Kaiming 正态分布初始化权重
             if isinstance(m, (nn.Conv1d, nn.Linear)):
                 nn.init.kaiming_normal_(m.weight.data)
                 if m.bias is not None:

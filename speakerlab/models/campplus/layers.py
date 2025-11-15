@@ -69,8 +69,8 @@ class TDNNLayer(nn.Module):
 
 class CAMLayer(nn.Module):
     def __init__(self,
-                bn_channels,
-                out_channels,
+                bn_channels, # # bn_channels=bn_size * growth_rate
+                out_channels,# growth_rate
                 kernel_size,
                 stride,
                 padding,
@@ -112,9 +112,9 @@ class CAMLayer(nn.Module):
 
 class CAMDenseTDNNLayer(nn.Module):
     def __init__(self,
-                 in_channels,
-                 out_channels,
-                 bn_channels,
+                 in_channels, # in_channels=in_channels + i * out_channels
+                 out_channels, # # growth_rate
+                 bn_channels, # bn_channels=bn_size * growth_rate
                  kernel_size,
                  stride=1,
                  dilation=1,
@@ -153,8 +153,8 @@ class CAMDenseTDNNBlock(nn.ModuleList):
     def __init__(self,
                  num_layers,
                  in_channels,
-                 out_channels,
-                 bn_channels,
+                 out_channels, # growth_rate
+                 bn_channels, # bn_channels=bn_size * growth_rate
                  kernel_size,
                  stride=1,
                  dilation=1,
@@ -216,9 +216,10 @@ class DenseLayer(nn.Module):
 
 
 class BasicResBlock(nn.Module):
-    expansion = 1
+    expansion = 1 # 输出通道数相对于内部 planes 的放大倍数
 
     def __init__(self, in_planes, planes, stride=1):
+        # in_planes:输入通道数，planes:输出基本通道数，stride:在Height维度的步长
         super(BasicResBlock, self).__init__()
         self.conv1 = nn.Conv2d(in_planes,
                                planes,
@@ -236,12 +237,12 @@ class BasicResBlock(nn.Module):
         self.bn2 = nn.BatchNorm2d(planes)
 
         self.shortcut = nn.Sequential()
-        if stride != 1 or in_planes != self.expansion * planes:
+        if stride != 1 or in_planes != self.expansion * planes: # stride != 1对应空间维度不一致的情况，in_planes!=self.expansion*planes对应通道维度不一致的情况
             self.shortcut = nn.Sequential(
                 nn.Conv2d(in_planes,
-                          self.expansion * planes,
-                          kernel_size=1,
-                          stride=(stride, 1),
+                          self.expansion * planes, # 处理通道不一致
+                          kernel_size=1, # 使用1*1卷积
+                          stride=(stride, 1), # 处理空间不一致
                           bias=False),
                 nn.BatchNorm2d(self.expansion * planes))
 
