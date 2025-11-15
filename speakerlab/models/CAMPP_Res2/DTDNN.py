@@ -7,37 +7,51 @@ import torch
 from torch import nn
 import torch.nn.functional as F
 
-from speakerlab.models.campplus.layers import DenseLayer, StatsPool, TDNNLayer, CAMDenseTDNNBlock, TransitLayer, BasicResBlock, get_nonlinear
+from speakerlab.models.campplus.layers import DenseLayer, StatsPool, TDNNLayer, CAMDenseTDNNBlock, TransitLayer, BasicResBlock, get_nonlinear, BasicBlockERes2Net_diff_AFF
 
 
 class FCM(nn.Module):
     def __init__(self,
-                block=BasicResBlock, # 把一个残差块的类作为默认参数传进来
-                num_blocks=[2, 2], # 用于设置每个layer中使用几个
+                block=BasicBlockERes2Net_diff_AFF, # 把一个残差块的类作为默认参数传进来
+                num_blocks=[3, 4], ## 与ERes2Net前两个block相匹配 # 用于设置每个layer中使用几个
                 m_channels=32,
                 feat_dim=80):
         super(FCM, self).__init__()
         self.in_planes = m_channels
+
+        # [B,1,F,T] -> [B,m_channels,F,T]
         self.conv1 = nn.Conv2d(1, m_channels, kernel_size=3, stride=1, padding=1, bias=False)
         self.bn1 = nn.BatchNorm2d(m_channels)
 
-        # block:参数（BasicResBlock），m_channels:输出通道数，
+        # m_channels:输出通道数
+        # [B,m_channels,F,T] -> [B,m_channels*expansion,F/2,T]
         self.layer1 = self._make_layer(block, m_channels, num_blocks[0], stride=2) 
-        self.layer2 = self._make_layer(block, m_channels, num_blocks[1], stride=2)
 
-        self.conv2 = nn.Conv2d(m_channels, m_channels, kernel_size=3, stride=(2, 1), padding=1, bias=False)
+        # [B,m_channels*expansion,F/2,T] -> [B,m_channels*2*expansion,F/4,T]
+        self.layer2 = self._make_layer(block, m_channels * 2, num_blocks[1], stride=2)
+
+        # [B,m_channels*2*expansion,F/4,T] -> [B,m_channels,F/8,T]
+        self.conv2 = nn.Conv2d(self.in_planes, m_channels, kernel_size=3, stride=(2, 1), padding=1, bias=False)
         self.bn2 = nn.BatchNorm2d(m_channels)
         self.out_channels =  m_channels * (feat_dim // 8)
 
-    def _make_layer(self, block, planes, num_blocks, stride):
-        strides = [stride] + [1] * (num_blocks - 1) # num_blocks表示该layer中包含的block数量，其中第一个块的stride=参数stride，其余所有块的stride=1。[2,1]
+        def _make_layer_ERes2Block(self, block, planes, num_blocks, stride):
+        """
+        构建stage，包含多个block
+        planes：每个 block 的目标通道
+        num_blocks：block 数量
+        stride：该stage中第一层的步幅，用于下采样
+
+        return:该stage的各blockSequential
+        """
+        # 生成 strides 列表，第一个 block 可能执行下采样（stride=2），之后的 block 都 stride=1
+        strides = [stride] + [1] * (num_blocks - 1)
+        
         layers = []
-        for stride in strides: # strides列表中记录的是该layer中每个block的stride, 这里开始创建每个block
-            layers.append(block(self.in_planes, planes, stride))
-            self.in_planes = planes * block.expansion
+        for stride in strides:
+            layers.append(block(self.in_planes, planes, stride)) # 每个block在最后的1x1卷积中返回的通道数是self.expansion*planes
+            self.in_planes = planes * block.expansion # 更新下一个block的输入通道数
         return nn.Sequential(*layers)
-
-
 
     def forward(self, x):
         x = x.unsqueeze(1)
@@ -47,7 +61,8 @@ class FCM(nn.Module):
         out = F.relu(self.bn2(self.conv2(out)))
 
         shape = out.shape
-        out = out.reshape(shape[0], shape[1]*shape[2], shape[3])
+        # [B,m_channels,F/8,T] -> [B,m_channels*(F/8),1,T]
+        out = out.reshape(shape[0], shape[1]*shape[2], shape[3]) # 展平频率维度和通道维度
         return out
 
 class CAMPPlus(nn.Module):
