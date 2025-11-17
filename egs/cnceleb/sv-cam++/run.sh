@@ -10,7 +10,7 @@ stop_stage=5
 
 data=data
 exp=exp
-exp_name=cam++_0
+exp_name=cam++
 gpus="0" ######
 
 . utils/parse_options.sh || exit 1
