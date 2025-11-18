@@ -10,19 +10,19 @@ exp_dir:
 
 # basic
 num_epoch: 70
-save_epoch_freq: 5
+save_epoch_freq: 1
 log_batch_freq: 100
 
 wav_len: 3.0 # duration(s) for each training sample.
 sample_rate: 16000
 aug_prob: 0.8
 speed_pertub: True
-lr: 0.2
+lr: 0.2 #### the learning rate is varied between 0.1 and 1e-4.
 min_lr: 0.00005
 
 # dataloader
-batch_size: 256
-num_workers: 16
+batch_size: 64 ###
+num_workers: 8
 
 # model
 fbank_dim: 80
@@ -117,7 +117,7 @@ loss:
   obj: speakerlab.loss.margin_loss.ArcMarginLoss
   args:
     scale: 32.0
-    margin: 0.3
+    margin: 0.3 #### 
     easy_margin: False
 
 margin_scheduler:
@@ -125,9 +125,9 @@ margin_scheduler:
   args:
     criterion: <loss>
     initial_margin: 0.0
-    final_margin: 0.3
-    increase_start_epoch: 20
-    fix_epoch: 50
+    final_margin: 0.3 ###
+    increase_start_epoch: 20 # 何时开始增加
+    fix_epoch: 50 # 何时停止增加
     step_per_epoch:
 
 checkpointer:

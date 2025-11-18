@@ -70,7 +70,7 @@ class TDNNLayer(nn.Module):
 
 class CAMLayer(nn.Module):
     def __init__(self,
-                bn_channels, # # bn_channels=bn_size * growth_rate
+                bn_channels, # 输入CAM模块中的输入维度实际上是在CAMDenseTDNNLayer中经过全连接（瓶颈层）降维的维度，即 bn_channels=bn_size * growth_rate
                 out_channels,# growth_rate
                 kernel_size,
                 stride,
@@ -79,6 +79,8 @@ class CAMLayer(nn.Module):
                 bias,
                 reduction=2):
         super(CAMLayer, self).__init__()
+
+        # CAM中的TDNN模块 [B, bn_channels, T] -> [B, out_channels, T]
         self.linear_local = nn.Conv1d(bn_channels,
                                  out_channels,
                                  kernel_size,
@@ -86,35 +88,54 @@ class CAMLayer(nn.Module):
                                  padding=padding,
                                  dilation=dilation,
                                  bias=bias)
+
+        # CAM
+        # 通道注意力
         self.linear1 = nn.Conv1d(bn_channels, bn_channels // reduction, 1)
         self.relu = nn.ReLU(inplace=True)
         self.linear2 = nn.Conv1d(bn_channels // reduction, out_channels, 1)
         self.sigmoid = nn.Sigmoid()
 
     def forward(self, x):
+
+        # CAM中的TDNN模块 [B, bn_channels, T] -> [B, out_channels, T]
         y = self.linear_local(x)
+
+        # seg_pooling 返回[B, bn_channels, T] x.mean(-1, keepdim=True) 返回 [B, bn_channels, 1] ：相加返回 [B, bn_channels, T]
         context = x.mean(-1, keepdim=True)+self.seg_pooling(x)
+
+        # context:[B, bn_channels, T] -> [B, bn_channels // reduction, T] -> ReLU
         context = self.relu(self.linear1(context))
+
+        # [B, bn_channels // reduction, T] -> [B, out_channels, T] -> Sigmoid
         m = self.sigmoid(self.linear2(context))
+
         return y*m
 
     def seg_pooling(self, x, seg_len=100, stype='avg'):
+        
+        # x:[B, bn_channels, T] -> seg:[B, bn_channels, 「T//seg_len]
         if stype == 'avg':
             seg = F.avg_pool1d(x, kernel_size=seg_len, stride=seg_len, ceil_mode=True)
         elif stype == 'max':
             seg = F.max_pool1d(x, kernel_size=seg_len, stride=seg_len, ceil_mode=True)
         else:
             raise ValueError('Wrong segment pooling type.')
+        
         shape = seg.shape
+        # unsqueeze(-1) → [B, bn_channels, T//seg_len, 1] -> expand(*shape, seg_len) → [B, bn_channels, T//seg_len, seg_len] -> reshape(*shape[:-1], -1) → [B, bn_channels, 「T//seg_len * seg_len]
         seg = seg.unsqueeze(-1).expand(*shape, seg_len).reshape(*shape[:-1], -1)
+
+        # 裁剪到 T，保持与输入尺寸一致 [B, bn_channels, 「T//seg_len * seg_len] -> [B, bn_channels, T]
         seg = seg[..., :x.shape[-1]]
+
         return seg
 
 
 class CAMDenseTDNNLayer(nn.Module):
     def __init__(self,
                  in_channels, # in_channels=in_channels + i * out_channels
-                 out_channels, # # growth_rate
+                 out_channels, # 模块的输出维度实际上就是 growth_rate 
                  bn_channels, # bn_channels=bn_size * growth_rate
                  kernel_size,
                  stride=1,
@@ -127,9 +148,15 @@ class CAMDenseTDNNLayer(nn.Module):
             kernel_size)
         padding = (kernel_size - 1) // 2 * dilation
         self.memory_efficient = memory_efficient
+
+        # 瓶颈层定义
         self.nonlinear1 = get_nonlinear(config_str, in_channels)
         self.linear1 = nn.Conv1d(in_channels, bn_channels, 1, bias=False)
+
+        # 第二个非线性层定义，在CAM层之前
         self.nonlinear2 = get_nonlinear(config_str, bn_channels)
+        
+        # CAM 层定义       
         self.cam_layer = CAMLayer(bn_channels,
                                 out_channels,
                                 kernel_size,
@@ -137,15 +164,18 @@ class CAMDenseTDNNLayer(nn.Module):
                                 padding=padding,
                                 dilation=dilation,
                                 bias=bias)
-
+    # 瓶颈层函数 先过BN+ReLU 再过全连接
     def bn_function(self, x):
         return self.linear1(self.nonlinear1(x))
 
     def forward(self, x):
+        # 瓶颈层函数 先过 BN+ReLU 再过 全连接，用于降维
+        # [B,F,T] （BN+ReLU) -> [B,bn_channels,T] bn_channels为瓶颈层输出通道数
         if self.training and self.memory_efficient:
             x = cp.checkpoint(self.bn_function, x)
         else:
             x = self.bn_function(x)
+        # [B,bn_channels,T] (BN+ReLU) -> CAMLayer融合后 -> [B,out_channels,T]
         x = self.cam_layer(self.nonlinear2(x))
         return x
 

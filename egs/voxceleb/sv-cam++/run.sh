@@ -5,13 +5,13 @@
 set -e
 . ./path.sh || exit 1
 
-stage=1
+stage=3
 stop_stage=5
 
 data=data
 exp=exp
 exp_name=cam++
-gpus="0 1 2 3"
+gpus="0"
 
 . utils/parse_options.sh || exit 1
 
