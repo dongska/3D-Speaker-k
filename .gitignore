@@ -55,3 +55,7 @@ egs/cnceleb/sv-cam++/cn-celeb2_v2.tar.gzab
 egs/cnceleb/sv-cam++/cn-celeb2_v2.tar.gzaa
 egs/cnceleb/sv-cam++/cn-celeb2_v2.tar.gzac
 egs/cnceleb/sv-cam++/wget-log.1
+spk2utt
+spk2utt_test
+utt2spk
+utt2spk_test
