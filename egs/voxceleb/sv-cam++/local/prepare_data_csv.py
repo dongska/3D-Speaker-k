@@ -73,7 +73,9 @@ def prepare_csv(wav_keys, seg_dur, wavscp_dict, utt2spk_dict, samplerate, random
         spk_id = utt2spk_dict[audio_id]
 
         try:
-            signal, fs = torchaudio.load(wav_file)
+            # signal, fs = torchaudio.load(wav_file)
+            info = torchaudio.info(wav_file)
+            audio_duration = info.num_frames / info.sample_rate
         except Exception:
             str_log = 'Error loading: failed to open file %s.' % wav_file
             print(str_log)
@@ -86,15 +88,15 @@ def prepare_csv(wav_keys, seg_dur, wavscp_dict, utt2spk_dict, samplerate, random
             logs.append(str_log)
             error_case += 1
             continue
-        if signal.shape[0] > 1:
-            str_log = 'Error loading: unexpected multichannel file %s.'%wav_file
-            print(str_log)
-            logs.append(str_log)
-            error_case += 1
-            continue
+        # if signal.shape[0] > 1:
+        #     str_log = 'Error loading: unexpected multichannel file %s.'%wav_file
+        #     print(str_log)
+        #     logs.append(str_log)
+        #     error_case += 1
+        #     continue
 
-        signal = signal.squeeze(0)
-        audio_duration = signal.shape[0] / samplerate
+        # signal = signal.squeeze(0)
+        # audio_duration = signal.shape[0] / samplerate
         if not random_segment:
             uniq_chunks_list = get_chunks(seg_dur, audio_id, audio_duration)
             for chunk in uniq_chunks_list:

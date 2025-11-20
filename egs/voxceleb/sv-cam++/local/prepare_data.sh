@@ -79,22 +79,78 @@ if [ ${stage} -le 4 ] && [ ${stop_stage} -ge 4 ]; then
   echo "Prepare wav.scp for each dataset ..."
   export LC_ALL=C # kaldi config
 
-  mkdir -p ${data}/musan ${data}/rirs ${data}/vox1 ${data}/vox2_dev
-  # musan
-  find $(pwd)/${rawdata_dir}/musan/noise/free-sound -name "*.wav" | awk -F"/" '{print $(NF-2)"/"$(NF-1)"/"$NF,$0}' >${data}/musan/wav.scp
-  # rirs
-  awk '{print $5}' $(pwd)/${rawdata_dir}/RIRS_NOISES/real_rirs_isotropic_noises/rir_list | xargs -I {} echo {} $(pwd)/${rawdata_dir}/{} > ${data}/rirs/wav.scp
+  # mkdir -p ${data}/musan ${data}/rirs ${data}/vox1 ${data}/vox2_dev
+  # # musan
+  # find $(pwd)/${rawdata_dir}/musan/noise/free-sound -name "*.wav" | awk -F"/" '{print $(NF-2)"/"$(NF-1)"/"$NF,$0}' >${data}/musan/wav.scp
+  # # rirs
+  # awk '{print $5}' $(pwd)/${rawdata_dir}/RIRS_NOISES/real_rirs_isotropic_noises/rir_list | xargs -I {} echo {} $(pwd)/${rawdata_dir}/{} > ${data}/rirs/wav.scp
   # find $(pwd)/${rawdata_dir}/RIRS_NOISES/simulated_rirs -name "*.wav" | awk -F"/" '{print $(NF-2)"/"$(NF-1)"/"$NF,$0}' >${data}/rirs/wav.scp
-  # # vox1
+  # vox1
   # find $(pwd)/${rawdata_dir}/voxceleb1/dev/wav -name "*.wav" | awk -F"/" '{print $(NF-2)"/"$(NF-1)"/"$NF,$0}' | sort >${data}/vox1/wav.scp
   # awk '{print $1}' ${data}/vox1/wav.scp | awk -F "/" '{print $0,$1}' >${data}/vox1/utt2spk
   # ./utils/utt2spk_to_spk2utt.pl ${data}/vox1/utt2spk >${data}/vox1/spk2utt
+
+# vox1测试集wav.scp的生成
+  test_root=/root/private_data/wmnt/voxceleb/vox1_test_wav
+  out_dir=data/vox1
+  #mkdir -p "$out_dir"
+
+  # 可靠生成 wav_test.scp：key = relative_path_from_test_root (speaker/video/file.wav)
+  #find "$test_root" -type f -name "*.wav" | while read -r f; do
+  # rel="${f#${test_root}/}"        # 删除开头的 test_root/ 前缀，得到 id10270/xxx/00001.wav
+  # printf '%s %s\n' "$rel" "$f"
+  #done | sort > "$out_dir/wav_test.scp"
+
+  awk '{print $1}' ${data}/vox1/wav_test.scp | awk -F "/" '{print $0,$1}' >${data}/vox1/utt2spk_test
+  ./utils/utt2spk_to_spk2utt.pl ${data}/vox1/utt2spk_test >${data}/vox1/spk2utt_test
+
+
+
+# vox1训练集wav.scp的生成
+  test_root=/root/private_data/wmnt/voxceleb/vox1_dev_wav
+  out_dir=data/vox1
+  #mkdir -p "$out_dir"
+
+  # 可靠生成 wav_test.scp：key = relative_path_from_test_root (speaker/video/file.wav)
+  #find "$test_root" -type f -name "*.wav" | while read -r f; do
+  # rel="${f#${test_root}/wav/}"        # 删除开头的 test_root/wav 前缀，得到 id10270/xxx/00001.wav
+  # printf '%s %s\n' "$rel" "$f"
+  #done | sort > "$out_dir/wav.scp"
+
+  awk '{print $1}' ${data}/vox1/wav.scp | awk -F "/" '{print $0,$1}' >${data}/vox1/utt2spk
+  ./utils/utt2spk_to_spk2utt.pl ${data}/vox1/utt2spk >${data}/vox1/spk2utt
+
+
+
+# vox2训练集wav.scp的生成
+  test_root=/root/private_data/wmnt/voxceleb/vox2_dev_wav
+  out_dir=data/vox2_dev
+  #mkdir -p "$out_dir"
+
+  # 可靠生成 wav_test.scp：key = relative_path_from_test_root (speaker/video/file.wav)
+  #find "$test_root" -type f -name "*.wav" | while read -r f; do
+  # rel="${f#${test_root}/}"        # 删除开头的 test_root 前缀，得到 id10270/xxx/00001.wav
+  # printf '%s %s\n' "$rel" "$f"
+  #done | sort > "$out_dir/wav.scp"
+
+  awk '{print $1}' ${data}/vox2_dev/wav.scp | awk -F "/" '{print $0,$1}' >${data}/vox2_dev/utt2spk
+  ./utils/utt2spk_to_spk2utt.pl ${data}/vox2_dev/utt2spk >${data}/vox2_dev/spk2utt
+
+
+#  find $(pwd)/${rawdata_dir}/voxceleb1/test -name "*.wav" \
+#  | awk -F "/" '{print $(NF-2)"/"$(NF-1)"/"$NF, $0}' \
+#  | sort > data/vox1/wav_test.scp
+
+
+  #awk '{print $1}' ${data}/vox1/wav_test.scp | awk -F "/" '{print $0,$1}' >${data}/vox1/utt2spk_test
+  #./utils/utt2spk_to_spk2utt.pl ${data}/vox1/utt2spk_test >${data}/vox1/spk2utt_test
+
   # if [ ! -d ${data}/vox1/trials ]; then
   #   echo "Download trials for vox1 ..."
   #   mkdir -p ${data}/vox1/trials
-  #   #wget --no-check-certificate https://www.robots.ox.ac.uk/~vgg/data/voxceleb/meta/veri_test.txt -O ${data}/vox1/trials/vox1-O.txt
-  #   #wget --no-check-certificate https://www.robots.ox.ac.uk/~vgg/data/voxceleb/meta/list_test_hard.txt -O ${data}/vox1/trials/vox1-H.txt
-  #   #wget --no-check-certificate https://www.robots.ox.ac.uk/~vgg/data/voxceleb/meta/list_test_all.txt -O ${data}/vox1/trials/vox1-E.txt
+  #   # wget --no-check-certificate https://www.robots.ox.ac.uk/~vgg/data/voxceleb/meta/veri_test.txt -O ${data}/vox1/trials/vox1-O.txt
+  #   # wget --no-check-certificate https://www.robots.ox.ac.uk/~vgg/data/voxceleb/meta/list_test_hard.txt -O ${data}/vox1/trials/vox1-H.txt
+  #   # wget --no-check-certificate https://www.robots.ox.ac.uk/~vgg/data/voxceleb/meta/list_test_all.txt -O ${data}/vox1/trials/vox1-E.txt
   #   wget --no-check-certificate https://www.robots.ox.ac.uk/~vgg/data/voxceleb/meta/veri_test2.txt -O ${data}/vox1/trials/vox1-O\(cleaned\).txt
   #   wget --no-check-certificate https://www.robots.ox.ac.uk/~vgg/data/voxceleb/meta/list_test_hard2.txt -O ${data}/vox1/trials/vox1-H\(cleaned\).txt
   #   wget --no-check-certificate https://www.robots.ox.ac.uk/~vgg/data/voxceleb/meta/list_test_all2.txt -O ${data}/vox1/trials/vox1-E\(cleaned\).txt
@@ -104,9 +160,9 @@ if [ ${stage} -le 4 ] && [ ${stop_stage} -ge 4 ]; then
   #   awk '{if($1==0)label="nontarget";else{label="target"}; print $2,$3,label}' ${data}/vox1/trials/vox1-E\(cleaned\).txt >${data}/vox1/trials/vox1_E_cleaned.trial
   # fi
   # vox2
-  find -L $(pwd)/${rawdata_dir}/voxceleb2_wav -name "*.wav" | awk -F"/" '{print $(NF-2)"/"$(NF-1)"/"$NF,$0}' | sort >${data}/vox2_dev/wav.scp
-  awk '{print $1}' ${data}/vox2_dev/wav.scp | awk -F "/" '{print $0,$1}' >${data}/vox2_dev/utt2spk
-  ./utils/utt2spk_to_spk2utt.pl ${data}/vox2_dev/utt2spk >${data}/vox2_dev/spk2utt
+  # find -L $(pwd)/${rawdata_dir}/voxceleb2_wav -name "*.wav" | awk -F"/" '{print $(NF-2)"/"$(NF-1)"/"$NF,$0}' | sort >${data}/vox2_dev/wav.scp
+  # awk '{print $1}' ${data}/vox2_dev/wav.scp | awk -F "/" '{print $0,$1}' >${data}/vox2_dev/utt2spk
+  # ./utils/utt2spk_to_spk2utt.pl ${data}/vox2_dev/utt2spk >${data}/vox2_dev/spk2utt
 
   echo "Success !!!"
 fi

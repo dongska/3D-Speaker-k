@@ -55,10 +55,13 @@ def main():
         with open(trial, 'r') as trial_f, open(score_path, 'w') as score_f:
             lines = trial_f.readlines()
             for line in tqdm(lines, desc=f'scoring trial {trial_name}'):
+                # print("First few keys in enrol_dict:", list(enrol_dict.keys())[:10])
+                # print("Does key exist:", 'id10270/x6uYqmx31kE/00001.wav' in enrol_dict)
+
                 pair = line.strip().split()
                 enrol_emb, test_emb = enrol_dict[pair[0]], test_dict[pair[1]]
-                #     # 修复关键行：
-                # #enrol_key = pair[0].replace('.wav', '')
+                # #     # 修复关键行：
+                # enrol_key = pair[0].replace('.wav', '')
                 # test_key = pair[1].replace('.wav', '')
                 # if enrol_key not in enrol_dict:
                 #     print("Missing enrol key:", enrol_key)

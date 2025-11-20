@@ -85,6 +85,10 @@ def compute_eer(fnr, fpr, scores=None):
     x2 = np.flatnonzero(diff_pm_fa < 0)[-1]
     a = (fnr[x1] - fpr[x1]) / (fpr[x2] - fpr[x1] - (fnr[x2] - fnr[x1]))
 
+    if scores is None or len(scores) == 0:
+        raise ValueError("Cannot compute EER: scores array is empty.")
+
+
     if scores is not None:
         score_sort = np.sort(scores)
         return fnr[x1] + a * (fnr[x2] - fnr[x1]), score_sort[x1]
