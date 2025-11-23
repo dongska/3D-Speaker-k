@@ -88,6 +88,12 @@ def main():
     if args.resume:
         checkpointer.recover_if_possible(device='cuda')
 
+    # ===== 打印模型参数名 =====
+    if rank == 0:
+        print("=== Model Parameters After Loading Checkpoint ===")
+        for name, param in model.named_parameters():
+            print(name, param.shape)
+
     cudnn.benchmark = True
 
     for epoch in epoch_counter:

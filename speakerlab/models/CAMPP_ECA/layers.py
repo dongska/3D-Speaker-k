@@ -102,7 +102,7 @@ class CAMLayer(nn.Module):
         self.sigmoid = nn.Sigmoid()
 
         # 掩码融合权重alpha
-        self.alpha = nn.Parameter(torch.tensor(-2.5, dtype=torch.float))
+        self.alpha = nn.Parameter(torch.tensor(0, dtype=torch.float))
 
     def forward(self, x):
 

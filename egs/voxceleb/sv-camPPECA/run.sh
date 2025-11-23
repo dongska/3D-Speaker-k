@@ -10,7 +10,7 @@ stop_stage=5
 
 data=data
 exp=exp
-exp_name=camPPECA
+exp_name=camPPECA_alpha0
 gpus="0"
 
 . utils/parse_options.sh || exit 1
