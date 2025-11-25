@@ -77,7 +77,8 @@ class CAMLayer(nn.Module):
                 padding,
                 dilation,
                 bias,
-                reduction=2):
+                reduction=2,
+                channel_groups=8): # 通道分组数 
         super(CAMLayer, self).__init__()
 
         # CAM中的TDNN模块 [B, bn_channels, T] -> [B, out_channels, T]
@@ -89,6 +90,10 @@ class CAMLayer(nn.Module):
                                  dilation=dilation,
                                  bias=bias)
 
+        # 在这里加入分组卷积定义
+        # [B, bn_channels, T] -> [B, out_channels, T]
+        self.conv1 = nn.Conv1d(bn_channels, out_channels, kernel_size=3, padding=1, groups=channel_groups, bias=False)
+
         # CAM
         # 通道注意力
         self.linear1 = nn.Conv1d(bn_channels, bn_channels // reduction, 1)
@@ -96,23 +101,52 @@ class CAMLayer(nn.Module):
         self.linear2 = nn.Conv1d(bn_channels // reduction, out_channels, 1)
         self.sigmoid = nn.Sigmoid()
 
-    def forward(self, x):
+        # 分别做BN
+        self.bn_m0 = nn.BatchNorm1d(out_channels)
+        self.bn_m = nn.BatchNorm1d(out_channels)
 
-        # print(x.shape)
+
+
+        # 掩码融合权重alpha
+        self.alpha = nn.Parameter(torch.tensor(0, dtype=torch.float))
+
+    def forward(self, x):
 
         # CAM中的TDNN模块 [B, bn_channels, T] -> [B, out_channels, T]
         y = self.linear_local(x)
 
+        # 对通道池化得到 T 维向量，然后加到所有通道上，得到T维向量，将均值加到每个通道上
+        # [B, bn_channels, T] -> [B, 1, T] -> broadcast add -> [B, bn_channels, T]
+        context0 = x.mean(dim=1, keepdim=True) + x
+
+        # 执行分组卷积获得掩码
+        # [B, bn_channels, T] -> [B, out_channels, T] -> Sigmoid
+        # m0 = self.sigmoid(self.conv1(context0))
+        m0 = self.conv1(context0)
+
+        # BN
+        m0 = self.bn_m0(m0)
+
+
         # seg_pooling 返回[B, bn_channels, T] x.mean(-1, keepdim=True) 返回 [B, bn_channels, 1] ：相加返回 [B, bn_channels, T]
-        context = x.mean(-1, keepdim=True)+self.seg_pooling(x)
+        context = x.mean(-1, keepdim=True) + self.seg_pooling(x)
 
         # context:[B, bn_channels, T] -> [B, bn_channels // reduction, T] -> ReLU
         context = self.relu(self.linear1(context))
 
-        # [B, bn_channels // reduction, T] -> [B, out_channels, T] -> Sigmoid
-        m = self.sigmoid(self.linear2(context))
+        # [B, bn_channels // reduction, T] -> [B, out_channels, T] 
+        # m = self.sigmoid(self.linear2(context))
+        m = self.linear2(context)
+        # BN
+        m = self.bn_m(m)
 
-        return y*m
+        # 权重限制，使用局部变量保存 sigmoid(self.alpha)，避免覆盖 Parameter
+        alpha = torch.sigmoid(self.alpha)
+
+        # 融合掩码
+        m_mix = self.sigmoid(alpha * m0 + (1 - alpha) * m)
+
+        return y*m_mix
 
     def seg_pooling(self, x, seg_len=100, stype='avg'):
         

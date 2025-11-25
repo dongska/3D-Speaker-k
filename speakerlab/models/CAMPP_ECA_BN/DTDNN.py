@@ -7,7 +7,7 @@ import torch
 from torch import nn
 import torch.nn.functional as F
 
-from speakerlab.models.CAMPP_EC_2xConv.layers import DenseLayer, StatsPool, TDNNLayer, CAMDenseTDNNBlock, TransitLayer, BasicResBlock, get_nonlinear
+from speakerlab.models.CAMPP_ECA_BN.layers import DenseLayer, StatsPool, TDNNLayer, CAMDenseTDNNBlock, TransitLayer, BasicResBlock, get_nonlinear
 
 
 class FCM(nn.Module):

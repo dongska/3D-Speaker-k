@@ -78,7 +78,8 @@ class CAMLayer(nn.Module):
                 dilation,
                 bias,
                 reduction=2,
-                channel_groups=8): # 通道分组数 
+                channel_groups=8, # 通道分组数 
+                time_groups=10): 
         super(CAMLayer, self).__init__()
 
         # CAM中的TDNN模块 [B, bn_channels, T] -> [B, out_channels, T]
@@ -93,17 +94,23 @@ class CAMLayer(nn.Module):
         # 通道维度分组
         # 在这里加入分组卷积定义
         # [B, bn_channels, T] -> [B, out_channels, T]
-        self.conv1 = nn.Conv1d(bn_channels, out_channels, kernel_size=3, padding=1, groups=channel_groups, bias=False)
+        self.conv_channel = nn.Conv1d(bn_channels, out_channels, kernel_size=3, padding=1, groups=channel_groups, bias=False)
 
-        # 时间维度分组，如果直接转置再分组卷积，会导致输出通道数没法控制
-        
+        # 时间维度分组，时间维149 padding -> 150
+        self.conv_time = nn.Conv1d(150, 150, kernel_size=3, padding=1, groups=time_groups, bias=False)
+        # 时间维度分支，降维，对通道维度
+        self.linear1 = nn.Conv1d(bn_channels, out_channels, kernel_size=1, bias=False)
         
         # CAM
         # 通道注意力
         # self.linear1 = nn.Conv1d(bn_channels, bn_channels // reduction, 1)
         # self.relu = nn.ReLU(inplace=True)
         # self.linear2 = nn.Conv1d(bn_channels // reduction, out_channels, 1)
-        # self.sigmoid = nn.Sigmoid()
+        self.sigmoid = nn.Sigmoid()
+
+        # 分别做BN
+        self.bn_m0 = nn.BatchNorm1d(out_channels)
+        self.bn_m = nn.BatchNorm1d(out_channels)
 
         # 掩码融合权重alpha
         self.alpha = nn.Parameter(torch.tensor(0, dtype=torch.float))
@@ -115,27 +122,43 @@ class CAMLayer(nn.Module):
 
         # 对通道池化得到 T 维向量，然后加到所有通道上，得到T维向量，将均值加到每个通道上
         # [B, bn_channels, T] -> [B, 1, T] -> broadcast add -> [B, bn_channels, T]
-        context0 = x.mean(dim=1, keepdim=True) + x
-
+        context_channel = x.mean(dim=1, keepdim=True) + x
         # 执行分组卷积获得掩码
         # [B, bn_channels, T] -> [B, out_channels, T] -> Sigmoid
         # m0 = self.sigmoid(self.conv1(context0))
-        m0 = self.conv1(context0)
+        m0 = self.conv_channel(context_channel)
+        # BN
+        m0 = self.bn_m0(m0)
+        
+        # 对时间池化得到通道维向量，然后加到所有时间步上
+        context_time = x.mean(dim=2, keepdim=True) + x
+        # 讲时间维由149 padding ->150
+        x_pad = F.pad(context_time, (0,1), "constant", 0)
+        # 转置
+        x_pad = x_pad.permute(0,2,1)  # (B,F,T+1) => (B,T+1,F)
+        # 执行分组卷积获得掩码
+        # [B, T+1, bn_channels] -> [B, T+1, bn_channels]
+        m = self.conv_time(x_pad)
+        # 转置回来
+        m = m.permute(0,2,1)  # (B,T+1,F) => (B,F,T+1)
+        # 裁切回原长度
+        m = m[..., :x.shape[-1]]
+        # 通过线性层调整通道数
+        # [B, bn_channels, T] -> [B, out_channels, T]
+        m = self.linear1(m)
+        # BN
+        m = self.bn_m(m)
 
-
-        # seg_pooling 返回[B, bn_channels, T] x.mean(-1, keepdim=True) 返回 [B, bn_channels, 1] ：相加返回 [B, bn_channels, T]
-        context = x.mean(-1, keepdim=True) + self.seg_pooling(x)
-
-        # context:[B, bn_channels, T] -> [B, bn_channels // reduction, T] -> ReLU
-        context = self.relu(self.linear1(context))
-
-        # [B, bn_channels // reduction, T] -> [B, out_channels, T] 
-        # m = self.sigmoid(self.linear2(context))
-        m = self.linear2(context)
+        # # seg_pooling 返回[B, bn_channels, T] x.mean(-1, keepdim=True) 返回 [B, bn_channels, 1] ：相加返回 [B, bn_channels, T]
+        # context = x.mean(-1, keepdim=True) + self.seg_pooling(x)
+        # # context:[B, bn_channels, T] -> [B, bn_channels // reduction, T] -> ReLU
+        # context = self.relu(self.linear1(context))
+        # # [B, bn_channels // reduction, T] -> [B, out_channels, T] 
+        # # m = self.sigmoid(self.linear2(context))
+        # m = self.linear2(context)
 
         # 权重限制，使用局部变量保存 sigmoid(self.alpha)，避免覆盖 Parameter
         alpha = torch.sigmoid(self.alpha)
-
         # 融合掩码
         m_mix = self.sigmoid(alpha * m0 + (1 - alpha) * m)
 
