@@ -40,7 +40,7 @@ fi
 if [ ${stage} -le 4 ] && [ ${stop_stage} -ge 4 ]; then
   # Extract embeddings of test datasets.
   echo "Stage4: Extracting speaker embeddings..."
-  torchrun --nproc_per_node=8 speakerlab/bin/extract.py --exp_dir $exp_dir \
+  torchrun --nproc_per_node=8  speakerlab/bin/extract.py --exp_dir $exp_dir \
            --data $data/vox1/wav_test.scp --use_gpu --gpu $gpus
 fi
 

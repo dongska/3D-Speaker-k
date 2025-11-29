@@ -40,14 +40,14 @@ fi
 if [ ${stage} -le 4 ] && [ ${stop_stage} -ge 4 ]; then
   # Extract embeddings of test datasets.
   echo "Stage4: Extracting speaker embeddings..."
-  torchrun --nproc_per_node=8 speakerlab/bin/extract_3s.py --exp_dir $exp_dir \
+  torchrun --nproc_per_node=8  --master_port=29501 speakerlab/bin/extract_3s.py --exp_dir $exp_dir \
            --data $data/vox1/wav_test.scp --use_gpu --gpu $gpus
 fi
 
 if [ ${stage} -le 5 ] && [ ${stop_stage} -ge 5 ]; then
   # Output score metrics.
   echo "Stage5: Computing score metrics..."
-  trials="$data/vox1/trials/vox1_O_cleaned.trial $data/vox1/trials/vox1_E_cleaned.trial $data/vox1/trials/vox1_H_cleaned.trial"
+  trials="$data/vox1/trials/vox1_O_cleaned.trial $data/vox1/trials/vox1_E_cleaned.trial $data/vox1/trials/vox1_H_cleaned.trial" 
   python speakerlab/bin/compute_score_metrics.py --enrol_data $exp_dir/embeddings --test_data $exp_dir/embeddings \
                                                  --scores_dir $exp_dir/scores --trials $trials
 fi
