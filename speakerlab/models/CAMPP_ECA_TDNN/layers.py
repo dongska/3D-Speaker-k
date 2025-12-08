@@ -4,6 +4,8 @@
 import torch
 import torch.nn.functional as F
 import torch.utils.checkpoint as cp
+import math
+import warnings
 from torch import nn
 from speakerlab.models.eres2net.fusion import AFF
 
@@ -79,7 +81,7 @@ class CAMLayer(nn.Module):
                 bias,
                 reduction=2,
                 channel_groups=8, # 通道分组数 
-                time_groups=10): 
+                time_groups=8): 
         super(CAMLayer, self).__init__()
 
         # CAM中的TDNN模块 [B, bn_channels, T] -> [B, out_channels, T]
@@ -150,20 +152,17 @@ class CAMLayer(nn.Module):
             if seg.shape[-1] == 0:
                 continue
             out_seg = conv(seg)  # [B, out_channels, L] (padding 已保证长度一致)
-            # 若 conv 因 padding 导致长度不一致，裁剪或填充以匹配分段长度
-            if out_seg.shape[-1] > (end - start):
-                print('Warning: conv time causes length increase, cropping output.')
-                out_seg = out_seg[..., : (end - start)]
-            elif out_seg.shape[-1] < (end - start):
-                print('Warning: conv time causes length decrease, padding output.')
-                pad_len = (end - start) - out_seg.shape[-1]
-                out_seg = F.pad(out_seg, (0, pad_len), mode='replicate')
+            # # 若 conv 因 padding 导致长度不一致，裁剪或填充以匹配分段长度
+            # if out_seg.shape[-1] > (end - start):
+            #     print('Warning: conv time causes length increase, cropping output.')
+            #     out_seg = out_seg[..., : (end - start)]
+            # elif out_seg.shape[-1] < (end - start):
+            #     print('Warning: conv time causes length decrease, padding output.')
+            #     pad_len = (end - start) - out_seg.shape[-1]
+            #     out_seg = F.pad(out_seg, (0, pad_len), mode='replicate')
             outs.append(out_seg)
-        if len(outs) == 0:
-            # 万一没有任何分段（T==0），构造一个和 m0 形状一致的零张量
-            m = torch.zeros_like(m0)
-        else:
-            m = torch.cat(outs, dim=-1)  # [B, out_channels, T]
+        
+        m = torch.cat(outs, dim=-1)  # [B, out_channels, T]
         # BN
         m = self.bn_m(m)
         
@@ -174,24 +173,7 @@ class CAMLayer(nn.Module):
 
         return y*m_mix
 
-    def seg_pooling(self, x, seg_len=100, stype='avg'):
-        
-        # x:[B, bn_channels, T] -> seg:[B, bn_channels, 「T//seg_len]
-        if stype == 'avg':
-            seg = F.avg_pool1d(x, kernel_size=seg_len, stride=seg_len, ceil_mode=True)
-        elif stype == 'max':
-            seg = F.max_pool1d(x, kernel_size=seg_len, stride=seg_len, ceil_mode=True)
-        else:
-            raise ValueError('Wrong segment pooling type.')
-        
-        shape = seg.shape
-        # unsqueeze(-1) → [B, bn_channels, T//seg_len, 1] -> expand(*shape, seg_len) → [B, bn_channels, T//seg_len, seg_len] -> reshape(*shape[:-1], -1) → [B, bn_channels, 「T//seg_len * seg_len]
-        seg = seg.unsqueeze(-1).expand(*shape, seg_len).reshape(*shape[:-1], -1)
 
-        # 裁剪到 T，保持与输入尺寸一致 [B, bn_channels, 「T//seg_len * seg_len] -> [B, bn_channels, T]
-        seg = seg[..., :x.shape[-1]]
-
-        return seg
 
 
 class CAMDenseTDNNLayer(nn.Module):

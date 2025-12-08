@@ -7,7 +7,8 @@ import torch
 import torchaudio
 import torch.nn.functional as F
 import torchaudio.compliance.kaldi as Kaldi
-
+import warnings
+warnings.filterwarnings("ignore", category=UserWarning)
 from speakerlab.process.augmentation import NoiseReverbCorrupter
 from speakerlab.utils.fileio import load_data_csv
 

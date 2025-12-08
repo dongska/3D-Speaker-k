@@ -5,7 +5,7 @@
 set -e
 . ./path.sh || exit 1
 
-stage=4
+stage=3
 stop_stage=5
 
 data=data
@@ -33,7 +33,7 @@ if [ ${stage} -le 3 ] && [ ${stop_stage} -ge 3 ]; then
   # Train the speaker embedding model.
   echo "Stage3: Training the speaker model..."
   num_gpu=$(echo $gpus | awk -F ' ' '{print NF}')
-  torchrun --nproc_per_node=$num_gpu speakerlab/bin/train.py --config conf/cam++ECA_TDNN.yaml --gpu $gpus \
+  torchrun  --nproc_per_node=$num_gpu speakerlab/bin/train.py --config conf/cam++ECA_TDNN.yaml --gpu $gpus \
            --data $data/vox2_dev/train.csv --noise $data/musan/wav.scp --reverb $data/rirs/wav.scp --exp_dir $exp_dir
 fi
 

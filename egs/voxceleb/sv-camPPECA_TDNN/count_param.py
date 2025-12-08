@@ -18,7 +18,7 @@ def count_parameters(model):
     return total
 
 parser = argparse.ArgumentParser(description='Extract embeddings for evaluation.')
-parser.add_argument('--exp_dir', default='exp/camPPECA_alpha0', type=str, help='Exp dir')
+parser.add_argument('--exp_dir', default='exp/camPPECA_TDNN', type=str, help='Exp dir')
 
 
 args = parser.parse_args(sys.argv[1:])
