@@ -71,7 +71,7 @@ class Xvector(nn.Module):
         self.pool = getattr(pooling_layers, pooling_func)(in_dim=self.stats_dim)
         self.seg_1 = nn.Linear(self.stats_dim * self.n_stats, embed_dim)
 
-    def forward(self, x):
+    def forward(self, x, return_feat=False):
         x = x.permute(0, 2, 1)  # (B,T,F) -> (B,F,T)
 
         out = self.frame_1(x)
@@ -80,10 +80,28 @@ class Xvector(nn.Module):
         out = self.frame_4(out)
         out = self.frame_5(out)
 
+        local_feat = segment_local_features(out) 
+
         stats = self.pool(out)
         embed_a = self.seg_1(stats)
 
+        if return_feat:
+            return embed_a, local_feat
+
         return embed_a
+    
+def segment_local_features(local_feat, seg_len=15):
+    B, C, T = local_feat.shape
+    pad_len = (seg_len - (T % seg_len)) % seg_len
+    if pad_len > 0:
+        local_feat = F.pad(local_feat, (0, pad_len))
+
+    T_new = local_feat.shape[-1]
+    n_seg = T_new // seg_len
+
+    local_feat = local_feat.view(B, C, n_seg, seg_len).mean(dim=-1)
+    return local_feat  # (B, C, n_seg)
+
 
 
 if __name__ == '__main__':
