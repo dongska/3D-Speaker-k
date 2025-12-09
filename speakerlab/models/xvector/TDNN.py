@@ -51,13 +51,14 @@ class Xvector(nn.Module):
                  hid_dim=512,
                  stats_dim=1500,
                  embed_dim=512,
-                 pooling_func='TSTP'):
+                 pooling_func='TSTP',
+                 return_feat=True):
         
         super(Xvector, self).__init__()
         self.feat_dim = feat_dim
         self.stats_dim = stats_dim
         self.embed_dim = embed_dim
-
+        self.return_feat = return_feat
         self.frame_1 = Tdnn_layer(feat_dim, hid_dim, context_size=5, dilation=1)
         self.frame_2 = Tdnn_layer(hid_dim, hid_dim, context_size=3, dilation=2)
         self.frame_3 = Tdnn_layer(hid_dim, hid_dim, context_size=3, dilation=3)
@@ -71,7 +72,7 @@ class Xvector(nn.Module):
         self.pool = getattr(pooling_layers, pooling_func)(in_dim=self.stats_dim)
         self.seg_1 = nn.Linear(self.stats_dim * self.n_stats, embed_dim)
 
-    def forward(self, x, return_feat=False):
+    def forward(self, x):
         x = x.permute(0, 2, 1)  # (B,T,F) -> (B,F,T)
 
         out = self.frame_1(x)
@@ -85,12 +86,12 @@ class Xvector(nn.Module):
         stats = self.pool(out)
         embed_a = self.seg_1(stats)
 
-        if return_feat:
+        if self.return_feat:
             return embed_a, local_feat
 
         return embed_a
     
-def segment_local_features(local_feat, seg_len=15):
+def segment_local_features(local_feat, seg_len=30):
     B, C, T = local_feat.shape
     pad_len = (seg_len - (T % seg_len)) % seg_len
     if pad_len > 0:

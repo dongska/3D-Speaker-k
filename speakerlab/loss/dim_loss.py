@@ -113,109 +113,151 @@ class MI1x1ConvNet(nn.Module):
         return h
 
 
-def infonce_loss(l, m):
+def infonce_loss(l, m, temperature=0.07, large_neg=-1e9, debug=False):
     """
-    计算 infoNCE（Noise-Contrastive Estimation）损失（多类情况）。
+    稳定的 infoNCE 损失（支持多 global 的情况）。
 
-    形状说明（调用约定）：
-    - l: 局部特征张量，形状为 `(N, D, T)`，其中 N=batch 大小，D=通道数/单元数，T=局部位置数（n_locals）。
-    - m: 多个全局特征，形状为 `(N, D, M)`，其中 M=每个样本对应的全局向量数量（n_multis），通常为 1 或多类表示。
+    函数输入说明：
+        l: (N, D, T)  本地特征（local），例如时间步的局部向量
+        m: (N, D, M)  多个全局/多视角特征（multi-global），M 表示每个样本的全局向量数量
 
-    算法要点：
-    - 对每个局部向量与其对应的全局向量计算正样本相似度（inner product），
-      并把同一 batch 中其他样本的全局向量作为负样本（outer products）。
-    - 为避免样本自身作为负样本，使用掩码将对角线（self 对应项）置为很小的值（在 softmax 前通过减去较大常数实现）。
-    - 最终在类别维度上做 log_softmax，取正样本（拼接后第一个位置）的对数概率并求负均值作为损失。
+    目标：对于每个 batch 中的每个本地向量（N * T 个），其正例为对应样本下的 M 个全局向量中的匹配对，
+    其余来自其他样本的全局向量视为负例。使用 softmax + 交叉熵（等价于 infoNCE）来将正例概率最大化。
 
-    Returns:
-        torch.Tensor: 标量损失。
+    关键点：
+    - 为了数值稳定与效率，先对向量做 L2 归一化，再通过矩阵乘法批量计算相似度；
+    - 通过把同一 batch 的样本对角位置（self）设置为非常小的值（large_neg）来屏蔽自身作为负例；
+    - 最终在 class 轴上做 log_softmax，取正类（第 0 类）的负对数概率平均作为损失。
+
+    参数：
+        temperature: 相似度缩放系数（默认为 0.07）
+        large_neg: 用于屏蔽自举项的极小值
+        debug: 打印调试信息
+
+    返回值：单个标量损失
     """
+    assert l.dim() == 3 and m.dim() == 3
+    N, D, n_locals = l.size()
+    _, D2, n_multis = m.size()
+    assert D == D2
 
-    # N: batch size, units: 特征维度 D, n_locals: 局部位置数 T
-    N, units, n_locals = l.size()
-    # m 的形状 (N, D, n_multis)
-    _, _ , n_multis = m.size()
+    # 先把形状从 (N, D, T) -> (N, T, D)，(N, D, M) -> (N, M, D)，便于按特征维做归一化与 matmul
+    l_p = l.permute(0, 2, 1).contiguous()  # (N, T, D)
+    m_p = m.permute(0, 2, 1).contiguous()  # (N, M, D)
 
-    # 先调整为 (N, T, D) 方便矩阵乘法（局部位置作为第一维的样本序列）
-    l_p = l.permute(0, 2, 1)   # (N, n_locals, D)
-    m_p = m.permute(0, 2, 1)   # (N, n_multis, D)
+    # 在特征维上做 L2 归一化，使内积等价于余弦相似度（数值稳定且利于训练）
+    l_p = F.normalize(l_p, p=2, dim=2)
+    m_p = F.normalize(m_p, p=2, dim=2)
 
-    # 展平为二维用于批量 outer-product 操作
-    l_n = l_p.reshape(-1, units)   # (N * n_locals, D)
-    m_n = m_p.reshape(-1, units)   # (N * n_multis, D)
+    # 为了使用 torch.matmul，构造 (N, D, M) 形式的 m
+    m_norm = m_p.permute(0, 2, 1).contiguous()  # (N, D, M)
 
-    # 正样本相似度：对每个局部向量与其对应 batch 的全局向量做内积
-    # u_p 形状解释：torch.matmul(l_p, m) -> (N, n_locals, n_multis)，unsqueeze(2) -> (N, n_locals, 1, n_multis)
-    u_p = torch.matmul(l_p, m).unsqueeze(2)
+    # 计算正例相似度：对每个 local（N, T, D）与每个同样样本下的 global（N, D, M）做矩阵乘法
+    # 结果 u_p 形状为 (N, T, M)，表示每个 local 对应 M 个正例的相似度
+    u_p = torch.matmul(l_p, m_norm)  # (N, T, M)
+    u_p = u_p / temperature
+    if debug:
+        pos = u_p.detach()
+        print("pos stats:", pos.mean().item(), pos.std().item(), pos.min().item(), pos.max().item())
 
-    # 负样本相似度：使用矩阵乘法得到 (N*n_multis, N*n_locals) 的相似矩阵，然后重塑为 (N, N, n_locals, n_multis)
+    # 为了高效计算所有负例相似度，将 l_p 和 m_p 展平为二维矩阵再用一次 mm
+    # l_n: (N * T, D) ; m_n: (N * M, D)
+    l_n = l_p.reshape(-1, D)   # (N * T, D)
+    m_n = m_p.reshape(-1, D)   # (N * M, D)
+
+    # 通过矩阵乘法得到所有 global 与所有 local 的相似度：形状 (N*M, N*T)
     u_n = torch.mm(m_n, l_n.t())
-    u_n = u_n.reshape(N, n_multis, N, n_locals).permute(0, 2, 3, 1)  # -> (N, N, n_locals, n_multis) -> permute -> (N, N, n_locals, n_multis)
+    # 把结果重塑为 (N, M, N, T) ，随后转置为 (N, N, T, M)
+    # 其中第一维是 global 的源样本索引，第三维是 local 的源样本索引
+    u_n = u_n.reshape(N, n_multis, N, n_locals).permute(0, 2, 3, 1).contiguous()
 
-    # 构造掩码以屏蔽掉正样本对应的 self 对应项（对角线），掩码形状为 (N, N, 1, 1)
-    mask = torch.eye(N)[:, :, None, None].to(l.device)
-    n_mask = 1 - mask
+    if debug:
+        print("u_n raw stats:", u_n.mean().item(), u_n.std().item())
 
-    # 把 self 对应项通过减一个较大常数来屏蔽（softmax 前），避免其影响负样本分布
-    u_n = (n_mask * u_n) - (10. * (1 - n_mask))  # mask out "self" examples
+    # 屏蔽对自身样本的负例（即当 global 来自 same-sample 时不要把它作为负例）
+    # mask 形状为 (N, N, 1, 1)，主对角为 1，其余为 0
+    mask = torch.eye(N, device=l.device)[:, :, None, None]
+    inv_mask = 1.0 - mask
 
-    # 重新排列为按局部位置展开的负样本集合，形状 -> (N, n_locals, N * n_locals, n_multis)
-    u_n = u_n.reshape(N, N * n_locals, n_multis).unsqueeze(dim=1).expand(-1, n_locals, -1, -1)
+    # 对角位置（self）置为 large_neg，使其在 softmax 中概率接近 0
+    u_n = u_n * inv_mask + large_neg * (1.0 - inv_mask)
 
-    # 在类别维（dim=2）上拼接正样本与负样本 logits，然后计算 log_softmax
-    pred_lgt = torch.cat([u_p, u_n], dim=2)
+    # 为了拼接到 class 维上，调整 negatives 的形状：先 reshape -> (N, N*T, M)，
+    # 然后扩展为 (N, T, N*T, M) 以与正类维对齐
+    u_n = u_n.reshape(N, N * n_locals, n_multis).unsqueeze(1).expand(-1, n_locals, -1, -1)
+
+    # 把正例维度扩成 (N, T, 1, M)，确保正类在拼接时位于第一个位置
+    u_p = u_p.unsqueeze(2)  # (N, T, 1, M)
+
+    # 在 class 轴（dim=2）上拼接正/负例，得到 (N, T, 1 + N*T, M)
+    pred_lgt = torch.cat([u_p, u_n], dim=2)  # (N, T, 1 + N*T, M)
+
+    # 如果每个样本有多个 global（M>1），把最后两个维度合并成一个 class 轴：
+    # (N, T, num_classes) ，num_classes = (1 + N*T) * M
+    if pred_lgt.size(-1) > 1:
+        pred_lgt = pred_lgt.reshape(N, n_locals, pred_lgt.size(2) * pred_lgt.size(3))
+
+    if debug:
+        print("pred_lgt shape before softmax:", pred_lgt.shape, "mean/std:", pred_lgt.mean().item(), pred_lgt.std().item())
+
+    # 在 class 轴上做 log_softmax，并取第 0 类（正类）的对数概率作为目标
     pred_log = F.log_softmax(pred_lgt, dim=2)
 
-    # 正样本在拼接后位于类别维的第一个位置，取其对数概率并求负均值作为最终损失
+    # loss = - E[ log p(correct=0) ]，对所有 (N, T) 求平均
     loss = -pred_log[:, :, 0].mean()
-
     return loss
 
-
-def compute_dim_loss(l_enc, m_enc):
-    
-    loss = infonce_loss(l_enc, m_enc)
-
-    return loss
 
 
 class LocalDIM(nn.Module):
     def __init__(self, local_channels, global_channels, mi_units=512):
         super().__init__()
         self.local_net = MI1x1ConvNet(local_channels, mi_units)
-        self.global_net = MI1x1ConvNet(global_channels, mi_units)
+        # create global_net only when needed
+        if global_channels != mi_units:
+            self.global_net = MI1x1ConvNet(global_channels, mi_units)
+        else:
+            self.global_net = None
+        self.mi_units = mi_units
 
     def forward(self, local_feat, global_feat):
         """
-        local_feat:  (B, C_local, T)
+        local_feat: (B, C_local, T)
         global_feat: (B, C_global)
         """
-
         B, C_local, T = local_feat.shape
         B2, C_global = global_feat.shape
         assert B == B2
 
-        # ------ reshape 成卷积可接受的形式 ------
-        # local -> (B, C_local, T, 1)
-        local_feat = local_feat.unsqueeze(-1)
+        # reshape for conv2d
+        local_in = local_feat.unsqueeze(-1)        # (B, C_local, T, 1)
+        global_in = global_feat.unsqueeze(-1).unsqueeze(-1)  # (B, C_global, 1, 1)
 
-        # global -> (B, C_global, 1, 1)
-        global_feat = global_feat.unsqueeze(-1).unsqueeze(-1)
+        L = self.local_net(local_in)   # (B, D, T, 1)
 
-        # ------ 1x1 conv map ------
-        L = self.local_net(local_feat)      # (B, D, T, 1)
-        G = self.global_net(global_feat)    # (B, D, 1, 1)
+        if self.global_net is not None:
+            G = self.global_net(global_in)  # (B, D, 1, 1)
+        else:
+            # if no projection, but channels != mi_units this is an error
+            if C_global != self.mi_units:
+                raise RuntimeError("global channels != mi_units but no global_net defined")
+            # expand to (B, mi_units, 1, 1)
+            G = global_in
 
-        # ------ reshape 为 infoNCE 需要的格式 ------
-        L = L.squeeze(-1)  # -> (B, D, T)
-        G = G.squeeze(-1).squeeze(-1)  # -> (B, D)
+        L = L.squeeze(-1)   # (B, D, T)
+        G = G.squeeze(-1).squeeze(-1)  # (B, D)
+        G = G.unsqueeze(-1)  # (B, D, 1)
 
-        # 扩展 global 特征到 infoNCE 形式 (B, D, 1)
-        G = G.unsqueeze(-1)
+        print(">>> debug: local L mean/std:", L.mean().item(), L.std().item())
+        print(">>> debug: global G mean/std:", G.mean().item(), G.std().item())
+        print(">>> debug: shapes L,G:", L.shape, G.shape)
 
-        # ------ 计算 DIM 损失 ------
-        loss = compute_dim_loss(L, G)
 
+
+        # optional: detach global embedding to stabilize (experiment)
+        # loss = compute_dim_loss(L, G.detach())
+        loss = infonce_loss(L, G, temperature=0.07, large_neg=-1e9)
+        print("DIM loss:", loss.item())
         return loss
     
 class ArcMarginLoss(nn.Module):
@@ -250,7 +292,14 @@ class ArcMarginLoss(nn.Module):
 
         loss = self.criterion(output, label)
         return loss
-    
+    def update(self, margin=0.2):
+        self.margin = margin
+        self.cos_m = math.cos(margin)
+        self.sin_m = math.sin(margin)
+        self.th = math.cos(math.pi - margin)
+        self.mm = math.sin(math.pi - margin) * margin
+        self.m = self.margin
+        self.mmm = 1.0 + math.cos(math.pi - margin)
 
 class FusionLoss(nn.Module):
     """
@@ -265,9 +314,12 @@ class FusionLoss(nn.Module):
         super().__init__()
         self.dim_module = LocalDIM(local_channels=local_channels, global_channels=global_channels, mi_units=mi_units)      # LocalDIM 实例
         self.arc_margin = ArcMarginLoss(scale=scale, margin=margin, easy_margin=easy_margin)       # ArcMarginLoss 实例
+        self.add_module("dim_module", self.dim_module)
+        self.add_module("arc_margin", self.arc_margin)
+
         self.lambda_dim = lambda_dim       # 权重
 
-    def forward(self, global_embed, local_feat, label):
+    def forward(self, outputs ,label):
         """
         参数：
             global_embed: (B, D) 全局向量（x-vector or ECAPA embedding）
@@ -278,9 +330,18 @@ class FusionLoss(nn.Module):
             loss_total: AAM + λ * DIM
             loss_dict:  用于监控的多项损失
         """
+        global_embed, local_feat, logits = outputs
+
+        device = global_embed.device
+
+        # 保证 dim module 在相同的 GPU
+        self.dim_module.to(device)
+
+        # global_embed = model_out["global"]
+        # local_feat   = model_out["local"]
 
         # -------- AAM loss --------
-        loss_aam = self.arc_margin(global_embed, label)
+        loss_aam = self.arc_margin(logits, label)
 
         # -------- DIM loss --------
         # LocalDIM 输入：(local_feat, global_embed)
@@ -289,8 +350,7 @@ class FusionLoss(nn.Module):
         # -------- 总损失 --------
         loss_total = loss_aam + self.lambda_dim * loss_dim
 
-        return loss_total, {
-            "loss_total": loss_total.item(),
-            "loss_aam": loss_aam.item(),
-            "loss_dim": loss_dim.item()
-        }
+        return loss_total
+    
+    def update(self, margin=0.2):
+        self.arc_margin.update(margin)

@@ -29,6 +29,22 @@ parser.add_argument('--resume', default=True, type=bool, help='Resume from recen
 parser.add_argument('--seed', default=1234, type=int, help='Random seed for training.')
 parser.add_argument('--gpu', nargs='+', help='GPU id to use.')
 
+class ModelWrapper(nn.Module):
+    def __init__(self, embedding_model, classifier):
+        super().__init__()
+        self.embedding_model = embedding_model
+        self.classifier = classifier
+
+    def forward(self, x):
+        # embedding_model 必须返回 (embed, local_feat)
+        embed, local_feat = self.embedding_model(x)
+
+        # classifier 只能吃 embed
+        logits = self.classifier(embed)
+
+        return embed, local_feat, logits
+
+
 def main():
     args, overrides = parser.parse_known_args(sys.argv[1:])
     config = build_config(args.config, overrides, True)
@@ -55,15 +71,18 @@ def main():
 
     # model
     embedding_model = build('embedding_model', config)
+
     if hasattr(config, 'speed_pertub') and config.speed_pertub:
         config.num_classes = len(config.label_encoder) * 3
     else:
         config.num_classes = len(config.label_encoder)
 
     classifier = build('classifier', config)
-    model = nn.Sequential(embedding_model, classifier)
+
+    model = ModelWrapper(embedding_model, classifier)
     model.cuda()
     model = torch.nn.parallel.DistributedDataParallel(model)
+
 
     # optimizer
     config.optimizer['args']['params'] = model.parameters()
@@ -155,12 +174,19 @@ def train(train_loader, model, criterion, optimizer, epoch, lr_scheduler, margin
         x = x.cuda(non_blocking=True)
         y = y.cuda(non_blocking=True)
 
-        # compute output
-        output = model(x)
+        # print("x.shape", x.shape, "y.shape", y.shape)
         
-        loss = criterion(output, y)
+        embed, local_feat, logits = model(x)
+        # print(embed.shape, local_feat.shape, logits.shape)
 
-        acc1 = accuracy(output, y)
+        loss = criterion(
+            (embed, local_feat, logits),
+            y
+        )
+
+
+        acc1 = accuracy(logits, y)
+
 
         # compute gradient and do optimizer step
         optimizer.zero_grad()
