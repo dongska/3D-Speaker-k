@@ -84,13 +84,34 @@ def main():
     model = torch.nn.parallel.DistributedDataParallel(model)
 
 
-    # optimizer
-    config.optimizer['args']['params'] = model.parameters()
-    optimizer = build('optimizer', config)
-
-    # loss function
+    # loss function，先初始化
     criterion = build('loss', config)
 
+    # 收集所有需要优化的参数：模型主体参数 + Loss函数内部的鉴别器/投影网络参数
+    # DDP模型参数可以直接访问.parameters()
+    params_to_optimize = list(model.parameters())
+
+    # 假设 FusionLoss 实例名为 criterion
+    # 1. 确保 Loss 函数内的 DIM 投影网络参数被添加
+    if hasattr(criterion, 'dim_module'):
+        print('Adding DIM module parameters to optimizer.')
+        params_to_optimize.extend(list(criterion.dim_module.parameters()))
+
+    # 2. 确保 Loss 函数内的分类权重 (如果它在 Loss 内部) 被添加
+    if hasattr(criterion, 'arc_margin'):
+        print('Adding ArcMarginLoss parameters to optimizer.')
+        # 假设 ArcMarginLoss 包含可训练参数，例如 W 矩阵
+        params_to_optimize.extend(list(criterion.arc_margin.parameters()))
+
+    # optimizer
+    config.optimizer['args']['params'] = params_to_optimize # 使用收集到的参数列表
+    optimizer = build('optimizer', config)
+
+    # # optimizer
+    # config.optimizer['args']['params'] = model.parameters()
+    # optimizer = build('optimizer', config)
+
+    
     # scheduler
     config.lr_scheduler['args']['step_per_epoch'] = len(train_dataloader)
     lr_scheduler = build('lr_scheduler', config)
@@ -148,13 +169,17 @@ def train(train_loader, model, criterion, optimizer, epoch, lr_scheduler, margin
     train_stats = AverageMeters()
     train_stats.add('Time', ':6.3f')
     train_stats.add('Data', ':6.3f')
-    train_stats.add('Loss', ':.4e')
+    # 新增 DIM Loss 和 AAM Loss 的记录项
+    train_stats.add('Total_Loss', ':.4e') # 原来的 'Loss' 改名为 'Total_Loss'
+    train_stats.add('DIM_Loss', ':.4e')
+    train_stats.add('AAM_Loss', ':.4e') 
     train_stats.add('Acc@1', ':6.2f')
     train_stats.add('Lr', ':.3e')
     train_stats.add('Margin', ':.3f')
     progress = ProgressMeter(
         len(train_loader),
         train_stats,
+        # 这里也要对应更新，使用新的总损失名称
         prefix="Epoch: [{}]".format(epoch)
     )
 
@@ -174,15 +199,15 @@ def train(train_loader, model, criterion, optimizer, epoch, lr_scheduler, margin
         x = x.cuda(non_blocking=True)
         y = y.cuda(non_blocking=True)
 
-        # print("x.shape", x.shape, "y.shape", y.shape)
-        
         embed, local_feat, logits = model(x)
-        # print(embed.shape, local_feat.shape, logits.shape)
 
-        loss = criterion(
+        # =================================================================
+        # 步骤 1: 接收两个返回值：总损失（用于反向传播）和损失指标字典
+        loss_total, loss_metrics = criterion(
             (embed, local_feat, logits),
             y
         )
+        # =================================================================
 
 
         acc1 = accuracy(logits, y)
@@ -190,11 +215,17 @@ def train(train_loader, model, criterion, optimizer, epoch, lr_scheduler, margin
 
         # compute gradient and do optimizer step
         optimizer.zero_grad()
-        loss.backward()
+        # 步骤 2a: 使用总损失（loss_total）进行反向传播
+        loss_total.backward() 
         optimizer.step()
 
         # recording
-        train_stats.update('Loss', loss.item(), x.size(0))
+        # =================================================================
+        # 步骤 2b: 使用字典中的各项损失来更新 train_stats
+        train_stats.update('Total_Loss', loss_metrics['Total_loss'], x.size(0))
+        train_stats.update('DIM_Loss', loss_metrics['DIM_loss'], x.size(0))
+        train_stats.update('AAM_Loss', loss_metrics['AAM_loss'], x.size(0))
+        # =================================================================
         train_stats.update('Acc@1', acc1.item(), x.size(0))
         train_stats.update('Lr', optimizer.param_groups[0]["lr"])
         train_stats.update('Margin', margin_scheduler.get_margin())
@@ -206,7 +237,8 @@ def train(train_loader, model, criterion, optimizer, epoch, lr_scheduler, margin
         end = time.time()
 
     key_stats={
-        'Avg_loss': train_stats.avg('Loss'),
+        # 确保这里也使用新的 Total_Loss 名称
+        'Avg_loss': train_stats.avg('Total_Loss'), 
         'Avg_acc': train_stats.avg('Acc@1'),
         'Lr_value': train_stats.val('Lr')
     }

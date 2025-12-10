@@ -10,7 +10,7 @@ stop_stage=5
 
 data=data
 exp=exp
-exp_name=tdnn_dim
+exp_name=tdnn_dim_vox
 gpus="0"
 
 . utils/parse_options.sh || exit 1
@@ -34,7 +34,7 @@ if [ ${stage} -le 3 ] && [ ${stop_stage} -ge 3 ]; then
   echo "Stage3: Training the speaker model..."
   num_gpu=$(echo $gpus | awk -F ' ' '{print NF}')
   torchrun  --nproc_per_node=$num_gpu --master_port=29506 speakerlab/bin/train_DIM.py --config conf/tdnn_DIM.yaml --gpu $gpus \
-           --data $data/vox2_dev/train_mini.csv --noise $data/musan/wav.scp --reverb $data/rirs/wav.scp --exp_dir $exp_dir
+           --data $data/vox2_dev/train.csv --noise $data/musan/wav.scp --reverb $data/rirs/wav.scp --exp_dir $exp_dir
 fi
 
 if [ ${stage} -le 4 ] && [ ${stop_stage} -ge 4 ]; then

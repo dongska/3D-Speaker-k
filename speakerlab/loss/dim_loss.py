@@ -233,6 +233,8 @@ class LocalDIM(nn.Module):
         local_in = local_feat.unsqueeze(-1)        # (B, C_local, T, 1)
         global_in = global_feat.unsqueeze(-1).unsqueeze(-1)  # (B, C_global, 1, 1)
 
+
+
         L = self.local_net(local_in)   # (B, D, T, 1)
 
         if self.global_net is not None:
@@ -248,16 +250,16 @@ class LocalDIM(nn.Module):
         G = G.squeeze(-1).squeeze(-1)  # (B, D)
         G = G.unsqueeze(-1)  # (B, D, 1)
 
-        print(">>> debug: local L mean/std:", L.mean().item(), L.std().item())
-        print(">>> debug: global G mean/std:", G.mean().item(), G.std().item())
-        print(">>> debug: shapes L,G:", L.shape, G.shape)
+        #print(">>> debug: local L mean/std:", L.mean().item(), L.std().item())
+        #print(">>> debug: global G mean/std:", G.mean().item(), G.std().item())
+        # print(">>> debug: shapes L,G:", L.shape, G.shape)
 
 
 
         # optional: detach global embedding to stabilize (experiment)
         # loss = compute_dim_loss(L, G.detach())
         loss = infonce_loss(L, G, temperature=0.07, large_neg=-1e9)
-        print("DIM loss:", loss.item())
+        # print("DIM loss:", loss.item())
         return loss
     
 class ArcMarginLoss(nn.Module):
@@ -350,7 +352,11 @@ class FusionLoss(nn.Module):
         # -------- 总损失 --------
         loss_total = loss_aam + self.lambda_dim * loss_dim
 
-        return loss_total
+        return loss_total, {
+            'AAM_loss': loss_aam.item(),
+            'DIM_loss': loss_dim.item(),
+            'Total_loss': loss_total.item()
+        }
     
     def update(self, margin=0.2):
         self.arc_margin.update(margin)
